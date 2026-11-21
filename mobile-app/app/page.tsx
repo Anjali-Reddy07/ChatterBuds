@@ -6,6 +6,7 @@ import { RoomSetup } from "@/components/RoomSetup";
 import { LiveConversation } from "@/components/LiveConversation";
 import { useChatterWebSocket } from "@/hooks/useChatterWebSocket";
 import { useAudioRecorder, AudioMode } from "@/hooks/useAudioRecorder";
+import { Headphones } from "lucide-react";
 
 function ChatterBudsApp() {
   const searchParams = useSearchParams();
@@ -75,10 +76,10 @@ function ChatterBudsApp() {
   };
 
   return (
-    <main className="w-full min-h-screen bg-background text-foreground flex flex-col justify-start items-center">
+    <main className="w-full min-h-screen bg-transparent text-slate-100 flex flex-col justify-start items-center">
       <div className="w-full max-w-md mx-auto flex-1 flex flex-col min-h-screen safe-top safe-bottom">
         {screen === "setup" ? (
-          <div className="px-4 py-2">
+          <div className="px-4 py-2 flex-1 flex flex-col justify-between">
             <RoomSetup
               roomCode={roomCode}
               onSetRoomCode={setRoomCode}
@@ -120,8 +121,11 @@ export default function Page() {
   return (
     <Suspense
       fallback={
-        <div className="w-full min-h-screen bg-background flex items-center justify-center text-slate-400 text-sm">
-          Loading ChatterBuds...
+        <div className="w-full min-h-screen bg-[#05070e] flex flex-col items-center justify-center gap-3 text-slate-400 text-sm">
+          <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center animate-pulse">
+            <Headphones className="w-5 h-5 text-cyan-400" />
+          </div>
+          <span className="font-medium tracking-wide">Starting ChatterBuds...</span>
         </div>
       }
     >
