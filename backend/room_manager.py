@@ -18,7 +18,32 @@ class RoomManager:
     def __init__(self):
         # Maps room_id -> list of Participant instances
         self.rooms: Dict[str, List[Participant]] = {}
+        # Maps room_id -> list of recent voice notes/messages
+        self.room_history: Dict[str, List[dict]] = {}
         self._lock = asyncio.Lock()
+
+    async def add_history(self, room_id: str, message: dict):
+        """Append voice note / translation to in-memory room history."""
+        async with self._lock:
+            history = self.room_history.setdefault(room_id, [])
+            history.append(message)
+            # Retain last 50 messages per room
+            if len(history) > 50:
+                history.pop(0)
+
+    async def get_history(self, room_id: str) -> List[dict]:
+        """Retrieve recent voice notes for the room."""
+        async with self._lock:
+            return list(self.room_history.get(room_id, []))
+
+    async def update_note_status(self, room_id: str, note_id: str, status: str):
+        """Update played or delivered status of a voice note."""
+        async with self._lock:
+            history = self.room_history.get(room_id, [])
+            for item in history:
+                if item.get("note_id") == note_id:
+                    item["status"] = status
+                    break
 
     async def add_participant(self, room_id: str, websocket: WebSocket, language: str) -> bool:
         """

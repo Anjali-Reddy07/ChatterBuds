@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { RoomSetup } from "@/components/RoomSetup";
+import { WhatsAppChatList, RecentChatItem } from "@/components/WhatsAppChatList";
+import { WhatsAppChatScreen } from "@/components/WhatsAppChatScreen";
 import { LiveConversation } from "@/components/LiveConversation";
 import { CallOverlay } from "@/components/CallOverlay";
 import { useChatterWebSocket } from "@/hooks/useChatterWebSocket";
@@ -116,17 +117,21 @@ function resolveValidWsUrl(): string {
 function ChatterBudsApp() {
   const searchParams = useSearchParams();
 
-  // Screen state: "setup" or "live"
-  const [screen, setScreen] = useState<"setup" | "live">("setup");
+  // Screen state: "chats" (WhatsApp chats hub), "chat" (Voice-only chat), or "live_call" (Live earbud translation call)
+  const [screen, setScreen] = useState<"chats" | "chat" | "live_call">("chats");
 
   // Room & Language state
   const [roomCode, setRoomCode] = useState("1234");
+  const [partnerPhone, setPartnerPhone] = useState<string | undefined>(undefined);
   const [selectedLang, setSelectedLang] = useState("Telugu");
   const [conversationMode, setConversationMode] = useState<ConversationMode>("in-person");
   const [mode, setMode] = useState<AudioMode>("vad");
 
   // Mobile Number Identity for Call Signaling
   const [myPhone, setMyPhone] = useState("+91");
+
+  // Recent Voice Conversations List
+  const [recentChats, setRecentChats] = useState<RecentChatItem[]>([]);
 
   // In-App Browser (Instagram / WhatsApp WebView) Guard
   const [isInAppBrowser, setIsInAppBrowser] = useState(false);
@@ -147,10 +152,28 @@ function ChatterBudsApp() {
       const isWebView = /Instagram|FBAN|FBAV|WhatsApp|Line|MicroMessenger/i.test(ua);
       setIsInAppBrowser(isWebView);
 
+      // Check stored phone number
+      const savedPhone = localStorage.getItem("chatterbuds_my_phone");
+      if (savedPhone && savedPhone.trim().length > 0) {
+        setMyPhone(savedPhone.trim());
+      }
+
+      // Check stored recent chats
+      try {
+        const savedChats = localStorage.getItem("chatterbuds_recent_chats");
+        if (savedChats) {
+          const parsed = JSON.parse(savedChats);
+          if (Array.isArray(parsed)) setRecentChats(parsed);
+        }
+      } catch (e) {
+        // ignore
+      }
+
       // Check URL query param ?room=XXXX on load
       const queryRoom = searchParams.get("room");
       if (queryRoom && queryRoom.trim().length > 0) {
         setRoomCode(queryRoom.trim());
+        setScreen("chat");
       } else {
         const randomCode = Math.floor(1000 + Math.random() * 9000).toString();
         setRoomCode(randomCode);
@@ -160,12 +183,6 @@ function ChatterBudsApp() {
       const savedConvMode = localStorage.getItem("chatterbuds_conv_mode");
       if (savedConvMode === "in-person" || savedConvMode === "remote") {
         setConversationMode(savedConvMode);
-      }
-
-      // Check stored phone number
-      const savedPhone = localStorage.getItem("chatterbuds_my_phone");
-      if (savedPhone && savedPhone.trim().length > 0) {
-        setMyPhone(savedPhone.trim());
       }
 
       // Resolve valid, auto-sanitized WebSocket URL
@@ -199,31 +216,78 @@ function ChatterBudsApp() {
     myLang: selectedLang,
     onCallAccepted: (acceptedRoomId) => {
       setRoomCode(acceptedRoomId);
-      setScreen("live");
+      setScreen("live_call");
     },
   });
 
-  // WebSocket connection hook
+  // WebSocket connection hook (enabled in chat or live call)
   const {
     isConnected,
     partnerConnected,
     partnerLang,
     messages,
     isPlaying,
+    currentlyPlayingId,
     connectionError,
     isWakingServer,
     wakeAttempt,
     isLocalhostIssue,
     sendAudioChunk,
+    sendVoiceNote,
+    markNotePlayed,
     playAudioBase64,
+    pauseAudio,
   } = useChatterWebSocket({
     wsUrl,
     roomId: roomCode,
     myLang: selectedLang,
-    enabled: screen === "live",
+    enabled: screen === "chat" || screen === "live_call",
   });
 
-  // Audio Recorder & VAD hook (with Echo-Guard protection and ConversationMode sensitivity calibration)
+  // Update recent conversations list when messages change
+  useEffect(() => {
+    if (typeof window !== "undefined" && roomCode) {
+      setRecentChats((prev) => {
+        const lastMsg = messages[messages.length - 1];
+        const snippet = lastMsg
+          ? `🎤 Voice Note (${lastMsg.durationSec || 5}s) • ${lastMsg.translatedText.slice(0, 24)}...`
+          : "Voice conversation room";
+        const time = lastMsg ? lastMsg.timestamp : "Just now";
+
+        const existingIdx = prev.findIndex((c) => c.roomId === roomCode);
+        let updated: RecentChatItem[];
+        if (existingIdx >= 0) {
+          updated = [...prev];
+          updated[existingIdx] = {
+            ...updated[existingIdx],
+            lastMessageSnippet: snippet,
+            lastMessageTime: time,
+            partnerPhone: partnerPhone || updated[existingIdx].partnerPhone,
+            partnerLang: partnerLang || updated[existingIdx].partnerLang,
+          };
+        } else {
+          updated = [
+            {
+              roomId: roomCode,
+              partnerPhone,
+              partnerLang: partnerLang || undefined,
+              lastMessageSnippet: snippet,
+              lastMessageTime: time,
+            },
+            ...prev,
+          ];
+        }
+        try {
+          localStorage.setItem("chatterbuds_recent_chats", JSON.stringify(updated.slice(0, 10)));
+        } catch (e) {
+          // ignore
+        }
+        return updated;
+      });
+    }
+  }, [messages, roomCode, partnerPhone, partnerLang]);
+
+  // Audio Recorder & VAD hook (active in live_call mode)
   const {
     isRecording,
     isSpeaking,
@@ -239,11 +303,11 @@ function ChatterBudsApp() {
   });
 
   const handleJoinRoom = () => {
-    setScreen("live");
+    setScreen("live_call");
   };
 
   const handleLeaveRoom = () => {
-    setScreen("setup");
+    setScreen("chats");
   };
 
   const handleSelectConversationMode = (newMode: ConversationMode) => {
@@ -295,31 +359,48 @@ function ChatterBudsApp() {
           </div>
         )}
 
-        {/* Screen Routing */}
-        {screen === "setup" ? (
-          <div className="px-4 py-1 flex-1 flex flex-col justify-between">
-            <RoomSetup
-              roomCode={roomCode}
-              onSetRoomCode={setRoomCode}
-              selectedLang={selectedLang}
-              onSelectLang={setSelectedLang}
-              conversationMode={conversationMode}
-              onSelectConversationMode={handleSelectConversationMode}
-              myPhone={myPhone}
-              onSetMyPhone={handleSetMyPhone}
-              isPresenceConnected={isPresenceConnected}
-              onCallPhone={(targetPhone) => startCall(targetPhone, roomCode)}
-              isCalling={callState === "calling" || callState === "ringing"}
-              wsUrl={wsUrl}
-              onSetWsUrl={setWsUrl}
-              onJoinRoom={handleJoinRoom}
-              onOpenSettings={() => {
-                setTempWsUrl(wsUrl);
-                setIsSettingsModalOpen(true);
-              }}
-              isServerWaking={isWakingServer}
-            />
-          </div>
+        {/* Screen Routing: WhatsApp Chats List -> Voice-Only Chat -> Live Earbud Call */}
+        {screen === "chats" ? (
+          <WhatsAppChatList
+            myPhone={myPhone}
+            onSetMyPhone={handleSetMyPhone}
+            myLang={selectedLang}
+            onSelectLang={setSelectedLang}
+            isPresenceConnected={isPresenceConnected}
+            recentChats={recentChats}
+            onOpenChat={(roomId, phone) => {
+              setRoomCode(roomId);
+              if (phone) setPartnerPhone(phone);
+              setScreen("chat");
+            }}
+            onStartCall={(targetPhone, roomId) => {
+              const rId = roomId || roomCode;
+              setRoomCode(rId);
+              setPartnerPhone(targetPhone);
+              startCall(targetPhone, rId);
+            }}
+            onOpenSettings={() => {
+              setTempWsUrl(wsUrl);
+              setIsSettingsModalOpen(true);
+            }}
+            currentRoomCode={roomCode}
+          />
+        ) : screen === "chat" ? (
+          <WhatsAppChatScreen
+            roomCode={roomCode}
+            partnerPhone={partnerPhone}
+            partnerConnected={partnerConnected}
+            partnerLang={partnerLang}
+            myLang={selectedLang}
+            messages={messages}
+            currentlyPlayingId={currentlyPlayingId}
+            onBackToChats={() => setScreen("chats")}
+            onStartLiveCall={() => setScreen("live_call")}
+            onSendVoiceNote={(base64, duration) => sendVoiceNote(base64, duration, myPhone)}
+            onPlayAudio={(id, b64, speed) => playAudioBase64(b64, id, speed)}
+            onPauseAudio={pauseAudio}
+            onMarkPlayed={(id) => markNotePlayed(id)}
+          />
         ) : (
           <LiveConversation
             roomCode={roomCode}
@@ -329,7 +410,7 @@ function ChatterBudsApp() {
             mode={mode}
             conversationMode={conversationMode}
             onSetMode={setMode}
-            onLeaveRoom={handleLeaveRoom}
+            onLeaveRoom={() => setScreen("chat")}
             isRecording={isRecording}
             isSpeaking={isSpeaking}
             audioLevel={audioLevel}

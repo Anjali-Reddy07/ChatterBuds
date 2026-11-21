@@ -240,6 +240,14 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                 "message": "Waiting for partner to join room...",
             })
 
+        # Send existing room voice note history to newly connected client
+        room_history = await room_manager.get_history(room_id)
+        if room_history:
+            await websocket.send_json({
+                "event": "room_history",
+                "messages": room_history,
+            })
+
         while True:
             raw_data = await websocket.receive_text()
             try:
@@ -250,12 +258,91 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
             msg_type = message.get("type")
             event = message.get("event")
 
-            # Keep-alive heartbeat ping/pong
+            # Keep-alive heartbeat ping/pong (every 20s)
             if msg_type == "ping" or event == "ping":
                 await websocket.send_json({"type": "pong", "timestamp": datetime.now(timezone.utc).timestamp()})
                 continue
 
-            # Process voice chunk
+            # Event: Voice Note Played Receipt
+            if event == "note_played":
+                note_id = message.get("note_id")
+                if note_id:
+                    await room_manager.update_note_status(room_id, note_id, "played")
+                    partner = await room_manager.get_partner(room_id, websocket)
+                    if partner:
+                        await partner.websocket.send_json({
+                            "event": "note_played",
+                            "note_id": note_id,
+                            "status": "played",
+                        })
+                continue
+
+            # Event: Voice Note Delivered
+            if event == "voice_note":
+                audio_base64 = message.get("audio_base64")
+                if not audio_base64:
+                    continue
+
+                try:
+                    audio_bytes = base64.b64decode(audio_base64)
+                except Exception as e:
+                    logger.error(f"Voice note base64 decode error: {e}")
+                    continue
+
+                # Step 1: Transcribe using Groq Whisper Large v3 Turbo
+                original_text = await transcribe_audio(audio_bytes, my_lang)
+                if not original_text or original_text.strip() == "":
+                    original_text = "(Audio recorded)"
+
+                partner = await room_manager.get_partner(room_id, websocket)
+                target_lang = partner.language if partner else "English"
+
+                # Step 2: Translate into receiver's language
+                if partner and partner.language != my_lang:
+                    translated_text = await translate_text(original_text, my_lang, target_lang)
+                else:
+                    translated_text = original_text
+
+                # Step 3: Edge-TTS synthesis in receiver's language
+                tts_audio_b64 = await synthesize_speech(translated_text, target_lang)
+
+                note_id = message.get("note_id") or f"{int(datetime.now(timezone.utc).timestamp()*1000)}"
+                duration_sec = message.get("duration_sec", 0)
+
+                delivered_note = {
+                    "event": "voice_note_delivered",
+                    "note_id": note_id,
+                    "sender_phone": message.get("sender_phone", ""),
+                    "original_audio_base64": audio_base64,
+                    "original_text": original_text,
+                    "translated_audio_base64": tts_audio_b64 or audio_base64,
+                    "translated_text": translated_text,
+                    "source_lang": my_lang,
+                    "target_lang": target_lang,
+                    "duration_sec": duration_sec,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "status": "delivered" if partner else "sent",
+                }
+
+                await room_manager.add_history(room_id, delivered_note)
+
+                # Send confirmation to sender (bubble right)
+                await websocket.send_json({
+                    **delivered_note,
+                    "incoming": False,
+                    "self": True,
+                })
+
+                # Broadcast to partner (bubble left, plays in receiver's language)
+                if partner:
+                    await partner.websocket.send_json({
+                        **delivered_note,
+                        "incoming": True,
+                        "self": False,
+                    })
+                continue
+
+            # Event: Live Call Audio Stream (bidirectional low-latency VAD + Echo-Guard)
             audio_base64 = message.get("audio_base64")
             if audio_base64:
                 try:
@@ -265,28 +352,19 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                     continue
 
                 if len(audio_bytes) < 100:
-                    # Audio chunk too short/empty
                     continue
 
-                # Step 1: Transcribe using Groq Whisper Large v3 Turbo
+                # Transcribe live stream
                 original_text = await transcribe_audio(audio_bytes, my_lang)
                 if not original_text or original_text.strip() == "":
-                    # Pure silence or unintelligible noise
                     continue
-
-                logger.info(f"[{room_id}] [{my_lang}] Transcribed: {original_text}")
 
                 partner = await room_manager.get_partner(room_id, websocket)
                 if partner:
                     target_lang = partner.language
-                    # Step 2: Translate into partner's language
                     translated_text = await translate_text(original_text, my_lang, target_lang)
-                    logger.info(f"[{room_id}] -> [{target_lang}] Translated: {translated_text}")
-
-                    # Step 3: Edge-TTS synthesis into base64 MP3
                     tts_audio_b64 = await synthesize_speech(translated_text, target_lang)
 
-                    # Step 4: Dispatch to partner (incoming message with audio for earbud auto-play)
                     await partner.websocket.send_json({
                         "event": "message",
                         "incoming": True,
@@ -297,7 +375,6 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                         "target_lang": target_lang,
                     })
 
-                    # Step 5: Dispatch confirmation to sender (self transcript)
                     await websocket.send_json({
                         "event": "message",
                         "incoming": False,
@@ -308,7 +385,6 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                         "target_lang": target_lang,
                     })
                 else:
-                    # Partner not connected yet; echo transcript to sender
                     await websocket.send_json({
                         "event": "message",
                         "incoming": False,
