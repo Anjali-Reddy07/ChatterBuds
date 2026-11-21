@@ -17,7 +17,7 @@ import {
   ShieldCheck,
   AlertCircle,
 } from "lucide-react";
-import { AudioMode } from "@/hooks/useAudioRecorder";
+import { AudioMode, ConversationMode } from "@/hooks/useAudioRecorder";
 import { ChatMessage } from "@/hooks/useChatterWebSocket";
 import { AudioVisualizer } from "./AudioVisualizer";
 
@@ -27,6 +27,7 @@ interface LiveConversationProps {
   partnerConnected: boolean;
   partnerLang: string | null;
   mode: AudioMode;
+  conversationMode?: ConversationMode;
   onSetMode: (mode: AudioMode) => void;
   onLeaveRoom: () => void;
   // Audio Recorder State
@@ -54,6 +55,7 @@ export function LiveConversation({
   partnerConnected,
   partnerLang,
   mode,
+  conversationMode = "in-person",
   onSetMode,
   onLeaveRoom,
   isRecording,
@@ -163,6 +165,9 @@ export function LiveConversation({
             </button>
             <span className="text-[11px] font-semibold text-slate-300 bg-slate-800/60 px-2 py-0.5 rounded-lg border border-slate-700/60">
               {myLang}
+            </span>
+            <span className="text-[11px] font-medium text-cyan-300 bg-cyan-950/50 px-2 py-0.5 rounded-lg border border-cyan-500/30 flex items-center gap-1">
+              {conversationMode === "in-person" ? "👥 In-Person" : "🌐 Long-Distance"}
             </span>
           </div>
 

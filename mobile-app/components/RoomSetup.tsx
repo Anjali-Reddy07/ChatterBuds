@@ -13,11 +13,13 @@ import {
   ArrowRight,
   ShieldCheck,
   Radio,
-  Zap,
   Sparkles,
-  Smartphone,
-  Volume2,
+  Users,
+  ChevronDown,
+  ChevronUp,
+  SlidersHorizontal,
 } from "lucide-react";
+import { ConversationMode } from "@/hooks/useAudioRecorder";
 
 export const AVAILABLE_LANGUAGES = [
   { code: "Auto-Detect", name: "Auto-Detect", native: "✨ Whisper AI", flag: "🌐" },
@@ -47,6 +49,8 @@ interface RoomSetupProps {
   onSetRoomCode: (code: string) => void;
   selectedLang: string;
   onSelectLang: (lang: string) => void;
+  conversationMode: ConversationMode;
+  onSelectConversationMode: (mode: ConversationMode) => void;
   wsUrl: string;
   onSetWsUrl: (url: string) => void;
   onJoinRoom: () => void;
@@ -59,15 +63,17 @@ export function RoomSetup({
   onSetRoomCode,
   selectedLang,
   onSelectLang,
+  conversationMode,
+  onSelectConversationMode,
   wsUrl,
   onSetWsUrl,
   onJoinRoom,
   onOpenSettings,
-  isServerWaking,
 }: RoomSetupProps) {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showRemoteQr, setShowRemoteQr] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [isRotating, setIsRotating] = useState(false);
 
@@ -121,34 +127,30 @@ export function RoomSetup({
     }
   };
 
-  const currentLangObj = AVAILABLE_LANGUAGES.find((l) => l.code === selectedLang) || AVAILABLE_LANGUAGES[0];
-
   return (
-    <div className="flex flex-col gap-4 py-2 animate-in fade-in duration-300">
+    <div className="flex flex-col gap-3.5 py-1 animate-in fade-in duration-300">
       {/* Brand Header */}
       <div className="flex items-center justify-between pt-1">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <div className="relative">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-cyan-500 via-teal-400 to-indigo-500 p-[1.5px] shadow-lg shadow-cyan-500/25">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500 via-teal-400 to-indigo-500 p-[1.5px] shadow-lg shadow-cyan-500/25">
               <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                <Headphones className="w-5 h-5 text-cyan-400" />
+                <Headphones className="w-4 h-4 text-cyan-400" />
               </div>
             </div>
-            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-emerald-400 rounded-full border-2 border-slate-950 animate-ping-slow" />
-            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-emerald-400 rounded-full border-2 border-slate-950" />
+            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-slate-950 animate-ping-slow" />
+            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-slate-950" />
           </div>
 
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-black tracking-tight text-white">
-                ChatterBuds
-              </h1>
-              <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 flex items-center gap-1 shadow-sm">
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-lg font-black tracking-tight text-white">ChatterBuds</h1>
+              <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
                 <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
                 Live Voice
               </span>
             </div>
-            <p className="text-xs text-slate-400 font-medium">Real-time two-way Bluetooth voice translator</p>
+            <p className="text-[11px] text-slate-400 font-medium">Real-time two-way Bluetooth voice translator</p>
           </div>
         </div>
 
@@ -157,11 +159,7 @@ export function RoomSetup({
             if (onOpenSettings) onOpenSettings();
             else setShowAdvanced(!showAdvanced);
           }}
-          className={`p-2.5 rounded-xl border transition-all active:scale-95 ${
-            showAdvanced
-              ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400"
-              : "glass-pill text-slate-400 hover:text-white hover:border-slate-600"
-          }`}
+          className="p-2 rounded-xl glass-pill text-slate-400 hover:text-white transition-all active:scale-95"
           title="Server Connection Settings"
         >
           <Settings2 className="w-4 h-4" />
@@ -170,33 +168,87 @@ export function RoomSetup({
 
       {/* Advanced Server Configuration Drawer (Collapsible) */}
       {showAdvanced && (
-        <div className="p-4 rounded-2xl glass-panel border border-cyan-500/30 flex flex-col gap-2.5 animate-in slide-in-from-top-2 duration-200">
+        <div className="p-3.5 rounded-2xl glass-panel border border-cyan-500/30 flex flex-col gap-2 animate-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between">
             <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
               <Radio className="w-3.5 h-3.5 text-cyan-400" />
-              WebSocket Engine Endpoint
+              Backend WebSocket Endpoint
             </label>
-            <span className="text-[10px] text-cyan-400 font-mono bg-cyan-950/60 px-2 py-0.5 rounded-full border border-cyan-500/30">
-              Configurable
-            </span>
           </div>
           <input
             type="text"
             value={wsUrl}
             onChange={(e) => onSetWsUrl(e.target.value)}
-            placeholder="wss://your-backend.onrender.com/ws"
-            className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-400 transition"
+            placeholder="wss://chatterbuds-api.onrender.com/ws"
+            className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-400 transition"
           />
-          <p className="text-[11px] text-slate-400 leading-relaxed">
-            Points to your Render cloud service or localtunnel backend endpoint.
-          </p>
         </div>
       )}
 
+      {/* CONVERSATION MODE SELECTOR (Above Step 1) */}
+      <div className="p-2.5 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 px-1">
+          <SlidersHorizontal className="w-3 h-3 text-cyan-400" />
+          Select Conversation Mode
+        </span>
+
+        <div className="grid grid-cols-2 gap-2">
+          {/* Mode 1: In-Person */}
+          <button
+            onClick={() => onSelectConversationMode("in-person")}
+            className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition-all ${
+              conversationMode === "in-person"
+                ? "bg-gradient-to-br from-cyan-950/70 to-slate-900 border-cyan-400/60 shadow-[0_0_15px_rgba(6,182,212,0.25)] ring-1 ring-cyan-400/40"
+                : "bg-slate-950/50 border-white/5 text-slate-400 hover:text-slate-200 hover:border-white/15"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Users className={`w-3.5 h-3.5 ${conversationMode === "in-person" ? "text-cyan-400" : "text-slate-400"}`} />
+                <span className={`text-xs font-bold ${conversationMode === "in-person" ? "text-white" : "text-slate-300"}`}>
+                  In-Person
+                </span>
+              </div>
+              {conversationMode === "in-person" && (
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 leading-tight">
+              Sitting together • QR pair &amp; tight noise gate
+            </p>
+          </button>
+
+          {/* Mode 2: Long-Distance */}
+          <button
+            onClick={() => onSelectConversationMode("remote")}
+            className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition-all ${
+              conversationMode === "remote"
+                ? "bg-gradient-to-br from-purple-950/70 to-slate-900 border-purple-400/60 shadow-[0_0_15px_rgba(168,85,247,0.25)] ring-1 ring-purple-400/40"
+                : "bg-slate-950/50 border-white/5 text-slate-400 hover:text-slate-200 hover:border-white/15"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Globe2 className={`w-3.5 h-3.5 ${conversationMode === "remote" ? "text-purple-400" : "text-slate-400"}`} />
+                <span className={`text-xs font-bold ${conversationMode === "remote" ? "text-white" : "text-slate-300"}`}>
+                  Long-Distance
+                </span>
+              </div>
+              {conversationMode === "remote" && (
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 leading-tight">
+              Different places • Share link &amp; continuous flow
+            </p>
+          </button>
+        </div>
+      </div>
+
       {/* STEP 1: Choose Your Language */}
-      <div className="p-4 rounded-2xl glass-panel border border-white/10 shadow-lg relative overflow-hidden">
-        <div className="flex items-center gap-2.5 mb-2.5">
-          <div className="w-6 h-6 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 font-bold text-xs flex items-center justify-center shrink-0">
+      <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-5 h-5 rounded-md bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 font-bold text-[11px] flex items-center justify-center shrink-0">
             1
           </div>
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">
@@ -208,7 +260,7 @@ export function RoomSetup({
           <select
             value={selectedLang}
             onChange={(e) => onSelectLang(e.target.value)}
-            className="w-full bg-slate-950/90 border border-slate-700/80 hover:border-slate-600 text-white text-sm rounded-xl px-4 py-3.5 appearance-none focus:outline-none focus:border-cyan-400 transition shadow-inner font-semibold cursor-pointer"
+            className="w-full bg-slate-950/90 border border-slate-700/80 hover:border-slate-600 text-white text-xs rounded-xl px-3.5 py-3 appearance-none focus:outline-none focus:border-cyan-400 transition font-semibold cursor-pointer"
           >
             {AVAILABLE_LANGUAGES.map((lang) => (
               <option key={lang.code} value={lang.code} className="bg-slate-900 text-white py-1">
@@ -216,95 +268,123 @@ export function RoomSetup({
               </option>
             ))}
           </select>
-          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
-            <span className="text-xs">▼</span>
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400">
+            <span className="text-[10px]">▼</span>
           </div>
         </div>
-
-        <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
-          Select what you will speak. Incoming voice will be automatically translated into this language.
-        </p>
       </div>
 
-      {/* STEP 2: Pair Partner's Phone */}
-      <div className="p-4 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col items-center gap-3 text-center relative overflow-hidden">
-        <div className="w-full flex items-center justify-between border-b border-white/10 pb-2.5">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-400 font-bold text-xs flex items-center justify-center shrink-0">
+      {/* STEP 2: Pair Partner's Phone (Dynamic based on Mode) */}
+      <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col items-center gap-2.5 text-center">
+        <div className="w-full flex items-center justify-between border-b border-white/10 pb-2">
+          <div className="flex items-center gap-2">
+            <div className="w-5 h-5 rounded-md bg-purple-500/20 border border-purple-500/40 text-purple-400 font-bold text-[11px] flex items-center justify-center shrink-0">
               2
             </div>
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-              Step 2: Pair Partner&apos;s Phone
+              {conversationMode === "in-person" ? "Step 2: Scan QR to Pair" : "Step 2: Share Room Link"}
             </h2>
           </div>
 
           <button
             onClick={generateRandomCode}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg glass-pill text-slate-300 hover:text-white transition active:scale-95"
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold rounded-lg glass-pill text-slate-300 hover:text-white transition active:scale-95"
             title="Generate New Room Code"
           >
             <RefreshCw className={`w-3 h-3 ${isRotating ? "animate-spin" : ""}`} />
-            New Code
+            New
           </button>
         </div>
 
-        {/* Room Code Display */}
-        <div className="flex items-center justify-center gap-2 my-0.5">
-          <span className="text-2xl font-black tracking-[0.25em] text-cyan-400 font-mono drop-shadow-[0_0_10px_rgba(6,182,212,0.4)]">
+        {/* Room Code Badge */}
+        <div className="flex items-center justify-center gap-2">
+          <span className="text-xl font-black tracking-[0.2em] text-cyan-400 font-mono">
             #{roomCode}
           </span>
           <button
             onClick={handleCopyCode}
-            className="p-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-300 hover:text-white transition active:scale-90"
-            title="Copy Room Code"
+            className="p-1 rounded-md bg-slate-800/80 border border-slate-700 text-slate-300 hover:text-white transition active:scale-90"
+            title="Copy Code"
           >
-            {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {copiedCode ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
           </button>
         </div>
 
-        {/* QR Code Container */}
-        <div className="relative p-2.5 bg-white rounded-2xl shadow-xl transition-transform duration-200 hover:scale-[1.01]">
-          {shareUrl ? (
-            <QRCodeSVG
-              value={shareUrl}
-              size={140}
-              level="H"
-              includeMargin={false}
-              fgColor="#05070e"
-            />
-          ) : (
-            <div className="w-36 h-36 bg-slate-200 animate-pulse rounded-lg" />
-          )}
-        </div>
+        {/* Dynamic Display based on Mode */}
+        {conversationMode === "in-person" ? (
+          /* IN-PERSON: Large QR Front and Center */
+          <div className="flex flex-col items-center gap-2 w-full">
+            <div className="p-2.5 bg-white rounded-2xl shadow-xl">
+              {shareUrl ? (
+                <QRCodeSVG value={shareUrl} size={135} level="H" includeMargin={false} fgColor="#05070e" />
+              ) : (
+                <div className="w-32 h-32 bg-slate-200 animate-pulse rounded-lg" />
+              )}
+            </div>
+            <span className="text-[11px] font-medium text-slate-300">
+              Point partner&apos;s phone camera here to pair
+            </span>
 
-        <p className="text-[11px] text-slate-300">
-          Partner scans this code with their phone camera to join instantly.
-        </p>
+            <div className="grid grid-cols-2 gap-2 w-full pt-1">
+              <button
+                onClick={handleCopyLink}
+                className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl glass-pill text-xs font-semibold text-slate-200 hover:text-white transition active:scale-95"
+              >
+                {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-cyan-400" />}
+                {copiedLink ? "Copied" : "Copy Link"}
+              </button>
+              <button
+                onClick={handleShare}
+                className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl glass-pill text-xs font-semibold text-slate-200 hover:text-white transition active:scale-95"
+              >
+                <Share2 className="w-3.5 h-3.5 text-purple-400" />
+                Share
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* LONG-DISTANCE: Big Share Buttons Prominently, Collapsible QR */
+          <div className="flex flex-col items-center gap-2.5 w-full">
+            <button
+              onClick={handleShare}
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:brightness-110 text-white font-bold text-xs tracking-wide flex items-center justify-center gap-2 shadow-lg shadow-purple-500/25 transition active:scale-[0.98]"
+            >
+              <Share2 className="w-4 h-4 text-white" />
+              <span>Share Invite Link (WhatsApp / Apps)</span>
+            </button>
 
-        {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-2 w-full pt-0.5">
-          <button
-            onClick={handleCopyLink}
-            className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl glass-pill hover:border-cyan-500/50 text-xs font-semibold text-slate-200 hover:text-white transition active:scale-95"
-          >
-            {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-cyan-400" />}
-            {copiedLink ? "Link Copied!" : "Copy Link"}
-          </button>
+            <button
+              onClick={handleCopyLink}
+              className="w-full py-2 px-3 rounded-xl glass-pill hover:border-cyan-500/40 text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 transition active:scale-98"
+            >
+              {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-cyan-400" />}
+              <span>{copiedLink ? "Link Copied to Clipboard!" : "Copy Room Link"}</span>
+            </button>
 
-          <button
-            onClick={handleShare}
-            className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl glass-pill hover:border-purple-500/50 text-xs font-semibold text-slate-200 hover:text-white transition active:scale-95"
-          >
-            <Share2 className="w-3.5 h-3.5 text-purple-400" />
-            Share Remote
-          </button>
-        </div>
+            {/* Collapsible QR Drawer for Remote Users */}
+            <div className="w-full pt-1">
+              <button
+                onClick={() => setShowRemoteQr(!showRemoteQr)}
+                className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 mx-auto transition"
+              >
+                <span>{showRemoteQr ? "Hide QR Code" : "Show QR Code (Optional)"}</span>
+                {showRemoteQr ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+
+              {showRemoteQr && (
+                <div className="mt-2 p-2 bg-white rounded-xl shadow-lg inline-block animate-in fade-in zoom-in-95">
+                  <QRCodeSVG value={shareUrl} size={110} level="H" fgColor="#05070e" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* STEP 3: Connect Bluetooth Earbuds & Start */}
-      <div className="p-4 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0">
+      <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col gap-2.5">
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold text-[11px] flex items-center justify-center shrink-0">
             3
           </div>
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">
@@ -312,18 +392,24 @@ export function RoomSetup({
           </h2>
         </div>
 
-        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-950/60 border border-emerald-500/20 text-xs">
-          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 p-2.5 rounded-xl bg-slate-950/60 border border-emerald-500/20 text-xs">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
           <div className="text-[11px] text-slate-300 leading-relaxed">
-            <span className="font-semibold text-emerald-400 block">Stereo Earbud Isolation Ready</span>
-            Put in paired Bluetooth earbuds for hands-free stereo audio. <strong>Echo-Guard</strong> automatically mutes your microphone while receiving translation.
+            <span className="font-semibold text-emerald-400 block">
+              {conversationMode === "in-person"
+                ? "In-Person Noise Gate Active"
+                : "Continuous Voice Flow Active"}
+            </span>
+            {conversationMode === "in-person"
+              ? "Microphone threshold is calibrated to block partner speech across the table."
+              : "Microphone pickup is optimized for effortless remote conversation."}
           </div>
         </div>
 
         {/* Start Button */}
         <button
           onClick={onJoinRoom}
-          className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 font-black text-sm tracking-wide flex items-center justify-center gap-2.5 shadow-xl shadow-cyan-500/25 transition-all duration-200 active:scale-[0.98] group"
+          className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 font-black text-xs tracking-wide uppercase flex items-center justify-center gap-2 shadow-xl shadow-cyan-500/25 transition-all active:scale-[0.98] group"
         >
           <span>Start Live Translation</span>
           <ArrowRight className="w-4 h-4 text-slate-950 transition-transform group-hover:translate-x-1" />

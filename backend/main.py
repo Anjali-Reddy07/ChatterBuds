@@ -52,7 +52,8 @@ async def health_check():
     stats = room_manager.get_stats()
     groq_configured = bool(get_groq_client())
     return {
-        "status": "healthy",
+        "status": "ok",
+        "healthy": True,
         "service": "ChatterBuds Voice Engine",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "groq_configured": groq_configured,

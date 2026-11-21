@@ -3,14 +3,21 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
 export type AudioMode = "vad" | "ptt";
+export type ConversationMode = "in-person" | "remote";
 
 interface UseAudioRecorderOptions {
   mode: AudioMode;
+  conversationMode?: ConversationMode; // In-Person vs Remote
   isPlaying: boolean; // Echo-guard: mute capture when partner translation is playing
   onAudioChunk: (base64Audio: string) => void;
 }
 
-export function useAudioRecorder({ mode, isPlaying, onAudioChunk }: UseAudioRecorderOptions) {
+export function useAudioRecorder({
+  mode,
+  conversationMode = "in-person",
+  isPlaying,
+  onAudioChunk,
+}: UseAudioRecorderOptions) {
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -26,10 +33,15 @@ export function useAudioRecorder({ mode, isPlaying, onAudioChunk }: UseAudioReco
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechDetectedRef = useRef(false);
   const isPlayingRef = useRef(isPlaying);
+  const conversationModeRef = useRef(conversationMode);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
+
+  useEffect(() => {
+    conversationModeRef.current = conversationMode;
+  }, [conversationMode]);
 
   const cleanupAudio = useCallback(() => {
     if (animationFrameRef.current) {
@@ -166,7 +178,10 @@ export function useAudioRecorder({ mode, isPlaying, onAudioChunk }: UseAudioReco
         const normalized = Math.min(100, Math.round((average / 128) * 100));
         setAudioLevel(normalized);
 
-        const SPEECH_THRESHOLD = 18; // Sensible threshold for voice pickup in earbuds/mic
+        // Acoustic Calibration:
+        // In-Person Mode: Higher threshold (26) so partner's voice across the table doesn't trigger your mic
+        // Remote Mode: Standard sensitivity (16) for effortless hands-free conversation
+        const SPEECH_THRESHOLD = conversationModeRef.current === "in-person" ? 26 : 16;
 
         if (normalized > SPEECH_THRESHOLD) {
           // Voice detected

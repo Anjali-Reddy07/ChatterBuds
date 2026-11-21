@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { RoomSetup } from "@/components/RoomSetup";
 import { LiveConversation } from "@/components/LiveConversation";
 import { useChatterWebSocket } from "@/hooks/useChatterWebSocket";
-import { useAudioRecorder, AudioMode } from "@/hooks/useAudioRecorder";
+import { useAudioRecorder, AudioMode, ConversationMode } from "@/hooks/useAudioRecorder";
 import {
   Headphones,
   ExternalLink,
@@ -27,6 +27,7 @@ function ChatterBudsApp() {
   // Room & Language state
   const [roomCode, setRoomCode] = useState("1234");
   const [selectedLang, setSelectedLang] = useState("Telugu");
+  const [conversationMode, setConversationMode] = useState<ConversationMode>("in-person");
   const [mode, setMode] = useState<AudioMode>("vad");
 
   // In-App Browser (Instagram / WhatsApp WebView) Guard
@@ -42,7 +43,7 @@ function ChatterBudsApp() {
   const [wsUrl, setWsUrl] = useState(defaultWsUrl);
   const [tempWsUrl, setTempWsUrl] = useState(defaultWsUrl);
 
-  // Check user agent for Instagram, Facebook, WhatsApp webviews
+  // Check user agent and stored preferences on load
   useEffect(() => {
     if (typeof window !== "undefined") {
       const ua = navigator.userAgent || "";
@@ -56,6 +57,19 @@ function ChatterBudsApp() {
       } else {
         const randomCode = Math.floor(1000 + Math.random() * 9000).toString();
         setRoomCode(randomCode);
+      }
+
+      // Check stored conversation mode
+      const savedConvMode = localStorage.getItem("chatterbuds_conv_mode");
+      if (savedConvMode === "in-person" || savedConvMode === "remote") {
+        setConversationMode(savedConvMode);
+      }
+
+      // Check stored custom WS URL
+      const savedWsUrl = localStorage.getItem("chatterbuds_ws_url");
+      if (savedWsUrl && savedWsUrl.trim().length > 0) {
+        setWsUrl(savedWsUrl.trim());
+        setTempWsUrl(savedWsUrl.trim());
       }
     }
   }, [searchParams]);
@@ -80,7 +94,7 @@ function ChatterBudsApp() {
     enabled: screen === "live",
   });
 
-  // Audio Recorder & VAD hook (with Echo-Guard protection)
+  // Audio Recorder & VAD hook (with Echo-Guard protection and ConversationMode sensitivity calibration)
   const {
     isRecording,
     isSpeaking,
@@ -90,6 +104,7 @@ function ChatterBudsApp() {
     stopHoldToTalk,
   } = useAudioRecorder({
     mode,
+    conversationMode,
     isPlaying,
     onAudioChunk: sendAudioChunk,
   });
@@ -102,9 +117,19 @@ function ChatterBudsApp() {
     setScreen("setup");
   };
 
+  const handleSelectConversationMode = (newMode: ConversationMode) => {
+    setConversationMode(newMode);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("chatterbuds_conv_mode", newMode);
+    }
+  };
+
   const handleSaveSettings = () => {
     const cleanUrl = tempWsUrl.trim();
     setWsUrl(cleanUrl);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("chatterbuds_ws_url", cleanUrl);
+    }
     setIsSettingsModalOpen(false);
   };
 
@@ -143,6 +168,8 @@ function ChatterBudsApp() {
               onSetRoomCode={setRoomCode}
               selectedLang={selectedLang}
               onSelectLang={setSelectedLang}
+              conversationMode={conversationMode}
+              onSelectConversationMode={handleSelectConversationMode}
               wsUrl={wsUrl}
               onSetWsUrl={setWsUrl}
               onJoinRoom={handleJoinRoom}
@@ -160,6 +187,7 @@ function ChatterBudsApp() {
             partnerConnected={partnerConnected}
             partnerLang={partnerLang}
             mode={mode}
+            conversationMode={conversationMode}
             onSetMode={setMode}
             onLeaveRoom={handleLeaveRoom}
             isRecording={isRecording}
