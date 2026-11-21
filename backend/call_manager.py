@@ -102,7 +102,14 @@ class CallManager:
         norm_from = normalize_phone_number(from_phone)
         norm_to = normalize_phone_number(to_phone)
 
-        logger.info(f"Call invite: {norm_from} -> {norm_to} [Room #{room_id}] (Lang: {caller_lang})")
+        # Lookup Truecaller Name for caller and callee
+        caller_profile = await fcm_service.get_user_profile(norm_from)
+        caller_name = caller_profile.get("truecallerName") if caller_profile else None
+
+        callee_profile = await fcm_service.get_user_profile(norm_to)
+        callee_name = callee_profile.get("truecallerName") if callee_profile else None
+
+        logger.info(f"Call invite: {norm_from} ({caller_name}) -> {norm_to} ({callee_name}) [Room #{room_id}] (Lang: {caller_lang})")
 
         callee_ws = await self.get_presence_socket(norm_to)
 
@@ -112,6 +119,7 @@ class CallManager:
                 await callee_ws.send_json({
                     "event": "incoming_call",
                     "from_phone": norm_from,
+                    "caller_name": caller_name,
                     "to_phone": norm_to,
                     "room_id": room_id,
                     "caller_lang": caller_lang,
@@ -120,6 +128,7 @@ class CallManager:
                 await caller_ws.send_json({
                     "event": "call_ringing",
                     "to_phone": norm_to,
+                    "callee_name": callee_name,
                     "room_id": room_id,
                     "method": "websocket",
                     "message": "Ringing partner's phone in app...",
@@ -128,7 +137,9 @@ class CallManager:
                 async with self._lock:
                     self.active_calls[room_id] = {
                         "caller_phone": norm_from,
+                        "caller_name": caller_name,
                         "callee_phone": norm_to,
+                        "callee_name": callee_name,
                         "caller_lang": caller_lang,
                         "status": "ringing",
                         "method": "websocket",
@@ -143,12 +154,14 @@ class CallManager:
             from_phone=norm_from,
             room_id=room_id,
             caller_lang=caller_lang,
+            caller_name=caller_name,
         )
 
         if fcm_sent:
             await caller_ws.send_json({
                 "event": "call_ringing",
                 "to_phone": norm_to,
+                "callee_name": callee_name,
                 "room_id": room_id,
                 "method": "fcm",
                 "message": "Ringing partner's phone via background push...",
@@ -158,7 +171,9 @@ class CallManager:
             async with self._lock:
                 self.active_calls[room_id] = {
                     "caller_phone": norm_from,
+                    "caller_name": caller_name,
                     "callee_phone": norm_to,
+                    "callee_name": callee_name,
                     "caller_lang": caller_lang,
                     "status": "ringing",
                     "method": "fcm",

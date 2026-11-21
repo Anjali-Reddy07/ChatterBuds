@@ -8,6 +8,7 @@ export type CallState = "idle" | "calling" | "ringing" | "incoming" | "connected
 export interface ActiveCallInfo {
   roomId: string;
   partnerPhone: string;
+  partnerName?: string;
   partnerLang?: string;
   isOutgoing: boolean;
   isCellular?: boolean;
@@ -234,6 +235,7 @@ export function useCallSignaling({
               setActiveCall({
                 roomId: data.room_id,
                 partnerPhone: data.from_phone,
+                partnerName: data.caller_name || undefined,
                 partnerLang: data.caller_lang,
                 isOutgoing: false,
               });
@@ -370,7 +372,7 @@ export function useCallSignaling({
 
   // Initiate an Outgoing Call (Tier 1 App/FCM with 20s auto-cellular fallback)
   const startCall = useCallback(
-    (toPhone: string, currentRoomCode: string) => {
+    (toPhone: string, currentRoomCode: string, resolvedName?: string) => {
       const cleanTo = toPhone.trim().replace(/[^\d+]/g, "");
       if (!cleanTo || cleanTo.length < 5) return;
 
@@ -384,6 +386,7 @@ export function useCallSignaling({
       setActiveCall({
         roomId: callRoomId,
         partnerPhone: cleanTo,
+        partnerName: resolvedName,
         isOutgoing: true,
       });
 

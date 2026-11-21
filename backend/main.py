@@ -129,14 +129,103 @@ async def outbound_cellular_call(payload: dict, request: Request):
     return await initiate_cellular_pstn_call(payload, request)
 
 
-async def transcribe_audio(audio_bytes: bytes, language: str) -> Optional[str]:
-    """Transcribe webm audio using Groq Whisper Large v3 Turbo."""
+@app.post("/api/auth/truecaller")
+async def truecaller_auth_callback(payload: dict):
+    """
+    Truecaller Web SDK verification and profile sync.
+    Accepts: { accessToken, endpoint, phoneNumber, truecallerName, preferredLanguage }
+    """
+    access_token = payload.get("accessToken", "").strip()
+    endpoint = payload.get("endpoint", "").strip()
+    phone_number = payload.get("phoneNumber", "").strip()
+    truecaller_name = payload.get("truecallerName", "").strip()
+    preferred_lang = payload.get("preferredLanguage", "Telugu").strip()
+
+    if endpoint and access_token:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(endpoint, headers={"Authorization": f"Bearer {access_token}"})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    name_obj = data.get("name", {})
+                    first = name_obj.get("first", "")
+                    last = name_obj.get("last", "")
+                    full = f"{first} {last}".strip()
+                    if full:
+                        truecaller_name = full
+                    phones = data.get("phoneNumbers", [])
+                    if phones:
+                        phone_number = phones[0]
+        except Exception as e:
+            logger.warning(f"Truecaller profile fetch notice: {e}")
+
+    norm_phone = normalize_phone_number(phone_number)
+    if not norm_phone:
+        raise HTTPException(status_code=400, detail="Valid phone number required")
+
+    await fcm_service.save_user_profile(
+        norm_phone,
+        {
+            "truecallerName": truecaller_name or "Verified User",
+            "preferredLanguage": preferred_lang,
+            "verified": True,
+        },
+    )
+
+    return {
+        "status": "ok",
+        "phoneNumber": norm_phone,
+        "truecallerName": truecaller_name or "Verified User",
+        "preferredLanguage": preferred_lang,
+    }
+
+
+@app.get("/api/caller-id/{phone_number}")
+async def lookup_caller_id(phone_number: str):
+    """
+    Resolves Truecaller registered name and caller identity for a dialed number.
+    Checks Firestore users collection, with fallback to external Caller ID API if configured.
+    """
+    norm_phone = normalize_phone_number(phone_number)
+    if not norm_phone or len(norm_phone) < 7:
+        return {"phoneNumber": norm_phone, "name": None, "found": False}
+
+    profile = await fcm_service.get_user_profile(norm_phone)
+    if profile and profile.get("truecallerName"):
+        return {
+            "phoneNumber": norm_phone,
+            "name": profile.get("truecallerName"),
+            "source": "truecaller",
+            "found": True,
+        }
+
+    # Optional external Caller ID API fallback
+    caller_id_api_key = os.getenv("CALLER_ID_API_KEY", "").strip()
+    if caller_id_api_key:
+        try:
+            import httpx
+            url = f"https://api.calleridservice.com/v1/lookup?phone={norm_phone}&key={caller_id_api_key}"
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    cname = r.json().get("name")
+                    if cname:
+                        return {"phoneNumber": norm_phone, "name": cname, "source": "cnam_api", "found": True}
+        except Exception:
+            pass
+
+    return {"phoneNumber": norm_phone, "name": None, "found": False}
+
+
+async def transcribe_audio(audio_bytes: bytes, language: Optional[str] = None) -> Optional[str]:
+    """Transcribe webm audio using Groq Whisper Large v3 Turbo (Auto-detects speaker language if language is None/auto)."""
     client = get_groq_client()
     if not client:
         logger.warning("Groq API key not configured; skipping transcription.")
-        return "[Groq API Key Required for Live Transcription]"
+        return None
 
-    whisper_code = get_whisper_code(language)
+    whisper_code = get_whisper_code(language) if (language and language.lower() not in ["auto", "auto-detect"]) else None
 
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
         tmp.write(audio_bytes)
@@ -289,7 +378,23 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                 await websocket.send_json({"type": "pong", "timestamp": datetime.now(timezone.utc).timestamp()})
                 continue
 
-            # Process voice chunk
+            # Update Language in live call
+            if event == "update_language" or msg_type == "update_language":
+                new_lang = message.get("language")
+                if new_lang:
+                    p = await room_manager.get_participant(room_id, websocket)
+                    if p:
+                        p.language = new_lang
+                        logger.info(f"[{room_id}] Participant updated language to: {new_lang}")
+                        partner = await room_manager.get_partner(room_id, websocket)
+                        if partner:
+                            await partner.websocket.send_json({
+                                "event": "partner_language_updated",
+                                "partner_lang": new_lang,
+                            })
+                continue
+
+            # Process voice chunk (Pure Audio-to-Audio Translation)
             audio_base64 = message.get("audio_base64")
             if audio_base64:
                 try:
@@ -299,64 +404,50 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                     continue
 
                 if len(audio_bytes) < 100:
-                    # Audio chunk too short/empty
                     continue
 
-                # Step 1: Transcribe using Groq Whisper Large v3 Turbo
-                original_text = await transcribe_audio(audio_bytes, my_lang)
+                # Step 1: Transcribe with Whisper (Auto-detecting speaker's spoken language)
+                original_text = await transcribe_audio(audio_bytes, None)
                 if not original_text or original_text.strip() == "":
-                    # Pure silence or unintelligible noise
                     continue
 
-                logger.info(f"[{room_id}] [{my_lang}] Transcribed: {original_text}")
+                logger.info(f"[{room_id}] Spoken speech transcribed: {original_text}")
 
                 partner = await room_manager.get_partner(room_id, websocket)
                 if partner:
                     target_lang = partner.language
-                    # Step 2: Translate into partner's language
-                    translated_text = await translate_text(original_text, my_lang, target_lang)
-                    logger.info(f"[{room_id}] -> [{target_lang}] Translated: {translated_text}")
+                    # Step 2: Translate strictly into the recipient's chosen language
+                    translated_text = await translate_text(original_text, "Auto-Detect", target_lang)
+                    logger.info(f"[{room_id}] -> Translated into recipient's language ({target_lang}): {translated_text}")
 
-                    # Step 3: Edge-TTS synthesis into base64 MP3
+                    # Step 3: Edge-TTS synthesis in recipient's language
                     tts_audio_b64 = await synthesize_speech(translated_text, target_lang)
 
-                    # Step 4: Dispatch to partner (incoming message with audio for earbud auto-play)
-                    await partner.websocket.send_json({
-                        "event": "message",
-                        "incoming": True,
-                        "original_text": original_text,
-                        "translated_text": translated_text,
-                        "audio_base64": tts_audio_b64,
-                        "source_lang": my_lang,
-                        "target_lang": target_lang,
-                    })
+                    if tts_audio_b64:
+                        # Step 4: Stream ONLY audio bytes to recipient's earbuds/speaker
+                        await partner.websocket.send_json({
+                            "event": "audio_stream",
+                            "audio_base64": tts_audio_b64,
+                            "target_lang": target_lang,
+                            "status": "playing",
+                        })
 
-                    # Step 5: Dispatch confirmation to sender (self transcript)
+                    # Acknowledge to speaker that speech was translated & delivered
                     await websocket.send_json({
-                        "event": "message",
-                        "incoming": False,
-                        "self": True,
-                        "original_text": original_text,
-                        "translated_text": translated_text,
-                        "source_lang": my_lang,
-                        "target_lang": target_lang,
+                        "event": "speech_sent",
+                        "status": "delivered",
                     })
                 else:
-                    # Partner not connected yet; echo transcript to sender
+                    # Partner not connected yet
                     await websocket.send_json({
-                        "event": "message",
-                        "incoming": False,
-                        "self": True,
-                        "original_text": original_text,
-                        "translated_text": "(Partner not connected yet)",
-                        "source_lang": my_lang,
-                        "target_lang": "N/A",
+                        "event": "speech_waiting",
+                        "status": "waiting_for_partner",
                     })
 
                 # If Twilio cellular caller is active in this room, stream translated speech to their telephone
                 if room_id in active_twilio_sessions:
                     cell_session = active_twilio_sessions[room_id]
-                    translated_for_cell = await translate_text(original_text, my_lang, cell_session.callee_lang)
+                    translated_for_cell = await translate_text(original_text, "Auto-Detect", cell_session.callee_lang)
                     cell_tts_b64 = await synthesize_speech(translated_for_cell, cell_session.callee_lang)
                     if cell_tts_b64:
                         await broadcast_to_twilio_cellular(room_id, base64.b64decode(cell_tts_b64))

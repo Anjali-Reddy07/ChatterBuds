@@ -16,6 +16,7 @@ import {
   Check,
   MessageSquare,
   ExternalLink,
+  ShieldCheck,
 } from "lucide-react";
 import { ActiveCallInfo, OfflineNoticeInfo, CallState } from "@/hooks/useCallSignaling";
 
@@ -74,9 +75,21 @@ export function CallOverlay({
               <Sparkles className="w-3.5 h-3.5" />
               Incoming Translation Call
             </span>
-            <h2 className="text-2xl font-black font-mono tracking-wider text-white">
-              {activeCall.partnerPhone}
-            </h2>
+            {activeCall.partnerName ? (
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-xl font-bold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                  {activeCall.partnerName}
+                </span>
+                <span className="text-sm font-mono text-slate-400">
+                  {activeCall.partnerPhone}
+                </span>
+              </div>
+            ) : (
+              <h2 className="text-2xl font-black font-mono tracking-wider text-white">
+                {activeCall.partnerPhone}
+              </h2>
+            )}
             <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs font-semibold text-slate-300 mx-auto mt-1">
               <span>Caller speaks:</span>
               <strong className="text-cyan-300">{activeCall.partnerLang || "Foreign Language"}</strong>
@@ -141,9 +154,21 @@ export function CallOverlay({
             <span className="text-[11px] font-bold tracking-widest uppercase text-cyan-400">
               {callStatusText}
             </span>
-            <h2 className="text-2xl font-black font-mono tracking-wider text-white">
-              {activeCall.partnerPhone}
-            </h2>
+            {activeCall.partnerName ? (
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-xl font-bold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                  {activeCall.partnerName}
+                </span>
+                <span className="text-sm font-mono text-slate-400">
+                  {activeCall.partnerPhone}
+                </span>
+              </div>
+            ) : (
+              <h2 className="text-2xl font-black font-mono tracking-wider text-white">
+                {activeCall.partnerPhone}
+              </h2>
+            )}
             <p className="text-xs text-slate-400">
               Room #{activeCall.roomId} • Live translation ({myLang})
             </p>

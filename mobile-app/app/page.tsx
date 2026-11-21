@@ -128,6 +128,7 @@ function ChatterBudsApp() {
 
   // Mobile Number Identity for Call Signaling
   const [myPhone, setMyPhone] = useState("+91");
+  const [truecallerName, setTruecallerName] = useState<string | null>(null);
 
   // In-App Browser (Instagram / WhatsApp WebView) Guard
   const [isInAppBrowser, setIsInAppBrowser] = useState(false);
@@ -226,8 +227,8 @@ function ChatterBudsApp() {
     isConnected,
     partnerConnected,
     partnerLang,
-    messages,
     isPlaying,
+    callStatus: wsCallStatus,
     connectionError,
     isWakingServer,
     wakeAttempt,
@@ -325,8 +326,13 @@ function ChatterBudsApp() {
               onSelectConversationMode={handleSelectConversationMode}
               myPhone={myPhone}
               onSetMyPhone={handleSetMyPhone}
+              truecallerName={truecallerName}
+              onSetTruecallerName={setTruecallerName}
               isPresenceConnected={isPresenceConnected}
-              onCallPhone={(targetPhone) => startCall(targetPhone, roomCode)}
+              onCallPhone={(targetPhone, resolvedName) => {
+                setPartnerPhone(targetPhone);
+                startCall(targetPhone, roomCode, resolvedName);
+              }}
               isCalling={callState === "calling" || callState === "ringing"}
               wsUrl={wsUrl}
               onSetWsUrl={setWsUrl}
@@ -342,26 +348,28 @@ function ChatterBudsApp() {
           <LiveConversation
             roomCode={roomCode}
             myLang={selectedLang}
+            onSelectMyLang={setSelectedLang}
             partnerConnected={partnerConnected}
             partnerLang={partnerLang}
-            mode={mode}
-            conversationMode={conversationMode}
-            onSetMode={setMode}
+            partnerPhone={partnerPhone || activeCall?.partnerPhone}
+            partnerName={activeCall?.partnerName || partnerPhone}
             onLeaveRoom={handleLeaveRoom}
             isRecording={isRecording}
             isSpeaking={isSpeaking}
             audioLevel={audioLevel}
-            micPermission={micPermission}
-            startHoldToTalk={startHoldToTalk}
-            stopHoldToTalk={stopHoldToTalk}
+            isPlaying={isPlaying}
+            callStatus={
+              isSpeaking
+                ? "speaking"
+                : isPlaying
+                ? "translating"
+                : partnerConnected
+                ? "connected"
+                : "connecting"
+            }
             isConnected={isConnected}
-            connectionError={connectionError}
             isWakingServer={isWakingServer}
             wakeAttempt={wakeAttempt}
-            isLocalhostIssue={isLocalhostIssue}
-            messages={messages}
-            isPlaying={isPlaying}
-            onReplayAudio={playAudioBase64}
             onOpenSettings={() => {
               setTempWsUrl(wsUrl);
               setIsSettingsModalOpen(true);

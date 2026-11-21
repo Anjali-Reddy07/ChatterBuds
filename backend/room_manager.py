@@ -52,6 +52,15 @@ class RoomManager:
 
             return self.rooms[room_id][0]
 
+    async def get_participant(self, room_id: str, websocket: WebSocket) -> Optional[Participant]:
+        """Retrieve the participant associated with this websocket."""
+        async with self._lock:
+            participants = self.rooms.get(room_id, [])
+            for p in participants:
+                if p.websocket == websocket:
+                    return p
+            return None
+
     async def get_partner(self, room_id: str, websocket: WebSocket) -> Optional[Participant]:
         """
         Retrieve the other participant in the same room.

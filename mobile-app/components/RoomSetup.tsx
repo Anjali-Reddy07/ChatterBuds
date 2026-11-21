@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { ConversationMode } from "@/hooks/useAudioRecorder";
 import { DialPad, COUNTRY_CODES } from "./DialPad";
+import { TruecallerAuthButton } from "./TruecallerAuthButton";
 
 export const AVAILABLE_LANGUAGES = [
   { code: "Auto-Detect", name: "Auto-Detect", native: "✨ Whisper AI", flag: "🌐" },
@@ -58,8 +59,10 @@ interface RoomSetupProps {
   onSelectConversationMode: (mode: ConversationMode) => void;
   myPhone: string;
   onSetMyPhone: (phone: string) => void;
+  truecallerName?: string | null;
+  onSetTruecallerName?: (name: string) => void;
   isPresenceConnected?: boolean;
-  onCallPhone?: (targetPhone: string) => void;
+  onCallPhone?: (targetPhone: string, resolvedName?: string) => void;
   isCalling?: boolean;
   wsUrl: string;
   onSetWsUrl: (url: string) => void;
@@ -77,6 +80,8 @@ export function RoomSetup({
   onSelectConversationMode,
   myPhone,
   onSetMyPhone,
+  truecallerName,
+  onSetTruecallerName,
   isPresenceConnected,
   onCallPhone,
   isCalling,
@@ -289,6 +294,18 @@ export function RoomSetup({
           placeholder="+91 98765 43210"
           className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs font-mono font-semibold text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-400 transition"
         />
+
+        {/* 1-Tap Truecaller Identity Verification */}
+        {onSetTruecallerName && (
+          <TruecallerAuthButton
+            myPhone={myPhone}
+            onSetMyPhone={onSetMyPhone}
+            truecallerName={truecallerName || null}
+            onSetTruecallerName={onSetTruecallerName}
+            myLang={selectedLang}
+          />
+        )}
+
         <p className="text-[10px] text-slate-400 leading-tight">
           Enables your partner to call and translate into your earbuds directly by dialing your phone number.
         </p>
@@ -405,8 +422,8 @@ export function RoomSetup({
         {pairingTab === "dialer" && (
           <div className="w-full pt-1">
             <DialPad
-              onCall={(to) => {
-                if (onCallPhone) onCallPhone(to);
+              onCall={(to, resolvedName) => {
+                if (onCallPhone) onCallPhone(to, resolvedName);
               }}
               partnerLangName={selectedLang}
               isCalling={isCalling}

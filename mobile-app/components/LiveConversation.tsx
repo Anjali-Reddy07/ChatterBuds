@@ -1,451 +1,344 @@
 "use client";
 
-import React, { useRef, useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
-  ArrowLeft,
+  PhoneOff,
   Mic,
+  MicOff,
   Volume2,
+  VolumeX,
   Radio,
-  Play,
-  Copy,
-  Check,
-  Share2,
-  Headphones,
   Sparkles,
-  Loader2,
-  Settings2,
+  Headphones,
+  Check,
+  Copy,
+  ChevronDown,
+  Globe,
   ShieldCheck,
-  AlertCircle,
+  User,
 } from "lucide-react";
-import { AudioMode, ConversationMode } from "@/hooks/useAudioRecorder";
-import { ChatMessage } from "@/hooks/useChatterWebSocket";
+import { AVAILABLE_LANGUAGES } from "./RoomSetup";
 import { AudioVisualizer } from "./AudioVisualizer";
 
 interface LiveConversationProps {
   roomCode: string;
   myLang: string;
+  onSelectMyLang: (lang: string) => void;
   partnerConnected: boolean;
   partnerLang: string | null;
-  mode: AudioMode;
-  conversationMode?: ConversationMode;
-  onSetMode: (mode: AudioMode) => void;
+  partnerPhone?: string;
+  partnerName?: string;
   onLeaveRoom: () => void;
-  // Audio Recorder State
+  // Audio state
   isRecording: boolean;
   isSpeaking: boolean;
   audioLevel: number;
-  micPermission: "prompt" | "granted" | "denied";
-  startHoldToTalk: () => void;
-  stopHoldToTalk: () => void;
-  // WebSocket State
+  isPlaying: boolean; // True when synthesized audio is streaming into user's earbuds (Echo-Guard)
+  callStatus?: "connecting" | "connected" | "speaking" | "translating";
   isConnected: boolean;
-  connectionError: string | null;
   isWakingServer?: boolean;
   wakeAttempt?: number;
-  isLocalhostIssue?: boolean;
-  messages: ChatMessage[];
-  isPlaying: boolean;
-  onReplayAudio: (base64Audio: string) => void;
   onOpenSettings?: () => void;
 }
 
 export function LiveConversation({
   roomCode,
   myLang,
+  onSelectMyLang,
   partnerConnected,
   partnerLang,
-  mode,
-  conversationMode = "in-person",
-  onSetMode,
+  partnerPhone,
+  partnerName,
   onLeaveRoom,
   isRecording,
   isSpeaking,
   audioLevel,
-  micPermission,
-  startHoldToTalk,
-  stopHoldToTalk,
+  isPlaying,
+  callStatus = "connecting",
   isConnected,
-  connectionError,
   isWakingServer,
   wakeAttempt = 0,
-  isLocalhostIssue,
-  messages,
-  isPlaying,
-  onReplayAudio,
-  onOpenSettings,
 }: LiveConversationProps) {
-  const chatScrollRef = useRef<HTMLDivElement>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [callDurationSec, setCallDurationSec] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [copiedRoom, setCopiedRoom] = useState(false);
+  const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
 
-  // Auto-scroll chat log on new messages or audio play
+  // Live Call Duration Timer (00:42)
   useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    let timer: NodeJS.Timeout | null = null;
+    if (isConnected && partnerConnected) {
+      timer = setInterval(() => {
+        setCallDurationSec((prev) => prev + 1);
+      }, 1000);
     }
-  }, [messages, isPlaying]);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isConnected, partnerConnected]);
 
-  const handleCopyMessage = async (id: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch (e) {
-      console.error("Copy failed:", e);
-    }
+  const formatDuration = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const handleCopyRoomLink = async () => {
+  const handleCopyLink = async () => {
     try {
       const url = `${window.location.origin}/?room=${roomCode}`;
       await navigator.clipboard.writeText(url);
       setCopiedRoom(true);
       setTimeout(() => setCopiedRoom(false), 2000);
     } catch (e) {
-      console.error("Room copy failed:", e);
+      // ignore
     }
   };
 
-  // Determine contextual center status text
-  const getContextualText = () => {
+  // Live status subtitle
+  const getStatusDisplay = () => {
     if (isPlaying) {
       return {
-        title: "Playing Translation",
-        subtitle: `Speaking in your earbuds • Echo-Guard Active`,
-        status: "playing",
+        text: "Translating to your earbuds...",
+        pillClass: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
+        pulse: true,
       };
     }
     if (isSpeaking) {
       return {
-        title: "Listening to You...",
-        subtitle: `Streaming ${myLang} to Whisper Turbo AI`,
-        status: "speaking",
+        text: "Speaking... (Auto-translating)",
+        pillClass: "bg-cyan-500/20 text-cyan-300 border-cyan-500/40",
+        pulse: true,
       };
     }
     if (!partnerConnected) {
       return {
-        title: "Waiting for Partner",
-        subtitle: `Share room #${roomCode} to connect partner's phone`,
-        status: "waiting",
+        text: "Waiting for partner to answer...",
+        pillClass: "bg-amber-500/20 text-amber-300 border-amber-500/40",
+        pulse: true,
       };
     }
     return {
-      title: mode === "vad" ? "Ready to Listen" : "Ready to Talk",
-      subtitle:
-        mode === "vad"
-          ? `Speak naturally in ${myLang} — pauses translate automatically`
-          : `Press & hold the button below to speak in ${myLang}`,
-      status: "ready",
+      text: "Connected • Live Voice Translation",
+      pillClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+      pulse: false,
     };
   };
 
-  const currentStatus = getContextualText();
+  const statusInfo = getStatusDisplay();
+  const displayName = partnerName || partnerPhone || `Room #${roomCode}`;
+  const displayPhone = partnerPhone || `Room Code #${roomCode}`;
 
   return (
-    <div className="flex flex-col h-[100dvh] max-h-[100dvh] justify-between pb-2 bg-gradient-to-b from-slate-950 via-[#070a14] to-slate-950">
-      {/* Top Header */}
-      <header className="p-3 bg-slate-950/80 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between sticky top-0 z-30 shadow-md">
+    <div className="flex flex-col h-[100dvh] max-h-[100dvh] justify-between pb-6 pt-4 px-4 bg-gradient-to-b from-[#060913] via-[#090d1c] to-[#04060c] text-slate-100 select-none relative overflow-hidden">
+      {/* Background Ambient Glow */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-1/4 left-1/2 -translate-x-1/2 w-80 h-80 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Top Header Bar */}
+      <header className="flex items-center justify-between z-20">
+        {/* Room Code Badge */}
         <button
-          onClick={onLeaveRoom}
-          className="p-2.5 rounded-xl glass-pill text-slate-300 hover:text-white hover:border-slate-500 transition-all active:scale-90"
-          title="Exit Room"
+          onClick={handleCopyLink}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 border border-white/10 hover:border-cyan-500/40 text-xs font-mono text-cyan-300 transition active:scale-95 shadow-md"
+          title="Copy invite link"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <span>#{roomCode}</span>
+          {copiedRoom ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-cyan-400" />}
         </button>
 
-        <div className="flex flex-col items-center gap-1">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleCopyRoomLink}
-              className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-cyan-950/50 border border-cyan-500/30 text-xs font-mono font-bold tracking-wider text-cyan-300 hover:border-cyan-400 transition"
-              title="Click to copy invite link"
-            >
-              <span>#{roomCode}</span>
-              {copiedRoom ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-cyan-400/80" />}
-            </button>
-            <span className="text-[11px] font-semibold text-slate-300 bg-slate-800/60 px-2 py-0.5 rounded-lg border border-slate-700/60">
-              {myLang}
-            </span>
-            <span className="text-[11px] font-medium text-cyan-300 bg-cyan-950/50 px-2 py-0.5 rounded-lg border border-cyan-500/30 flex items-center gap-1">
-              {conversationMode === "in-person" ? "👥 In-Person" : "🌐 Long-Distance"}
-            </span>
-          </div>
+        {/* User's Selected Language Selector Badge */}
+        <div className="relative">
+          <button
+            onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 border border-cyan-500/40 text-xs font-semibold text-white hover:border-cyan-400 transition shadow-lg active:scale-95"
+            title="Change your listening language"
+          >
+            <Globe className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Hear In: <strong className="text-cyan-300">{myLang}</strong></span>
+            <ChevronDown className="w-3 h-3 text-slate-400" />
+          </button>
 
-          {/* Partner Status Pill */}
-          <div className="flex items-center gap-1.5">
-            {partnerConnected ? (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-                Partner Connected {partnerLang ? `(${partnerLang})` : ""}
+          {isLangDropdownOpen && (
+            <div className="absolute right-0 mt-2 w-48 max-h-60 overflow-y-auto bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl z-50 p-1.5 flex flex-col gap-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">
+                Your Preferred Language
+              </span>
+              {AVAILABLE_LANGUAGES.map((l) => (
+                <button
+                  key={l.code}
+                  onClick={() => {
+                    onSelectMyLang(l.name);
+                    setIsLangDropdownOpen(false);
+                  }}
+                  className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-medium text-left transition ${
+                    myLang === l.name
+                      ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold"
+                      : "text-slate-200 hover:bg-slate-800"
+                  }`}
+                >
+                  <span>{l.flag} {l.name}</span>
+                  {myLang === l.name && <Check className="w-3.5 h-3.5 text-cyan-400" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* Main Center Caller Profile & Audio Visualizer */}
+      <div className="flex-1 flex flex-col items-center justify-center text-center gap-5 z-10 my-auto">
+        {/* Large Phone Avatar with Pulsing Audio Ring */}
+        <div className="relative">
+          <div
+            className={`w-32 h-32 rounded-full flex items-center justify-center border-2 transition-all duration-300 shadow-2xl relative ${
+              isPlaying
+                ? "bg-gradient-to-tr from-emerald-500/30 to-teal-500/20 border-emerald-400 shadow-[0_0_50px_rgba(16,185,129,0.4)] scale-105"
+                : isSpeaking
+                ? "bg-gradient-to-tr from-cyan-500/30 to-blue-500/20 border-cyan-400 shadow-[0_0_50px_rgba(6,182,212,0.45)] scale-105"
+                : "bg-slate-900/80 border-white/10"
+            }`}
+          >
+            {partnerName ? (
+              <span className="text-4xl font-black text-white font-mono">
+                {partnerName.slice(0, 2).toUpperCase()}
               </span>
             ) : (
-              <button
-                onClick={handleCopyRoomLink}
-                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-400 hover:text-amber-300 transition"
-                title="Tap to copy invite link"
-              >
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping-slow shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
-                <span>Waiting for partner (Tap to invite)</span>
-              </button>
+              <User className="w-14 h-14 text-cyan-300/80" />
+            )}
+          </div>
+
+          {/* Glowing Animated Breathing Ring */}
+          <div
+            className={`absolute -inset-4 rounded-full blur-2xl pointer-events-none transition-opacity duration-300 ${
+              isPlaying
+                ? "bg-emerald-500/30 opacity-100 animate-pulse"
+                : isSpeaking
+                ? "bg-cyan-500/35 opacity-100 animate-pulse"
+                : "bg-cyan-500/10 opacity-30"
+            }`}
+          />
+        </div>
+
+        {/* Resolved Caller Name & Number */}
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-black tracking-tight text-white font-mono">
+              {displayName}
+            </h1>
+            {partnerName && (
+              <span className="p-1 rounded-full bg-cyan-500/20 text-cyan-300" title="Verified Truecaller Profile">
+                <ShieldCheck className="w-4 h-4 text-cyan-400" />
+              </span>
+            )}
+          </div>
+
+          <p className="text-sm text-slate-400 font-mono tracking-wide">
+            {displayPhone}
+          </p>
+
+          {/* Connection & Live Call Duration */}
+          <div className="flex items-center gap-2 mt-1">
+            <span
+              className={`px-3 py-1 rounded-full border text-xs font-semibold flex items-center gap-1.5 ${statusInfo.pillClass}`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  statusInfo.pulse ? "bg-cyan-400 animate-ping-slow" : "bg-emerald-400"
+                }`}
+              />
+              <span>{statusInfo.text}</span>
+            </span>
+
+            {partnerConnected && (
+              <span className="px-2.5 py-1 rounded-full bg-slate-900/80 border border-white/10 text-xs font-mono font-bold text-slate-300">
+                {formatDuration(callDurationSec)}
+              </span>
             )}
           </div>
         </div>
 
-        {/* Mode Switcher */}
-        <div className="flex items-center bg-slate-900/90 border border-slate-700/80 rounded-xl p-1 shadow-inner">
-          <button
-            onClick={() => onSetMode("vad")}
-            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
-              mode === "vad"
-                ? "bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 shadow-md shadow-cyan-500/20"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-            title="Auto-Listen Voice Activity Detection"
-          >
-            Auto
-          </button>
-          <button
-            onClick={() => onSetMode("ptt")}
-            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
-              mode === "ptt"
-                ? "bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 shadow-md shadow-cyan-500/20"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-            title="Hold-to-Talk Push-to-Talk"
-          >
-            Hold
-          </button>
+        {/* Live Audio Waveform Visualizer */}
+        <div className="w-full max-w-xs h-14 flex items-center justify-center">
+          <AudioVisualizer
+            isSpeaking={isSpeaking}
+            isPlaying={isPlaying}
+            audioLevel={isPlaying ? 0.75 : audioLevel}
+          />
         </div>
-      </header>
 
-      {/* Reassuring Cloud Voice Engine Status Indicator (Auto-connects & wakes Render) */}
-      {!isConnected && (
-        <div className="mx-4 mt-3 p-3.5 rounded-2xl bg-gradient-to-r from-cyan-950/70 via-slate-900/90 to-teal-950/60 border border-cyan-500/30 text-xs text-slate-200 flex items-center justify-between shadow-lg animate-in fade-in duration-200">
-          <div className="flex items-center gap-2.5">
-            <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
-            <div>
-              <span className="font-semibold text-cyan-300 block">Connecting to ChatterBuds Cloud Voice Engine...</span>
-              <span className="text-[11px] text-slate-400">
-                {isWakingServer || wakeAttempt > 0
-                  ? `Waking up translation server (~30s on first start, attempt ${wakeAttempt || 1})...`
-                  : "Establishing secure real-time audio channel..."}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Echo-Guard Live Strip */}
-      <div className="px-4 py-1.5 bg-slate-950/40 border-b border-white/5 flex items-center justify-between text-[11px] text-slate-400 backdrop-blur-md">
-        <div className="flex items-center gap-2">
+        {/* Echo-Guard & Auto-Listen Notice */}
+        <div className="px-3.5 py-1.5 rounded-full bg-slate-950/60 border border-white/5 text-[11px] text-slate-400 flex items-center gap-1.5 backdrop-blur-md">
           {isPlaying ? (
-            <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-              <Volume2 className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
-              Echo-Guard: Playing in Earbuds (Mic Muted)
-            </span>
-          ) : isSpeaking ? (
-            <span className="text-cyan-400 font-semibold flex items-center gap-1.5">
-              <Radio className="w-3.5 h-3.5 animate-pulse text-cyan-400" />
-              Speech Detected
+            <span className="text-emerald-400 font-semibold flex items-center gap-1">
+              <Volume2 className="w-3.5 h-3.5 animate-pulse" />
+              Echo-Guard: Mic auto-paused while translation plays
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-slate-400">
-              <Headphones className="w-3.5 h-3.5 text-slate-500" />
-              {mode === "vad" ? "Auto-Listen (0.75s silence pause)" : "Press Hold-to-Talk to speak"}
+            <span className="flex items-center gap-1">
+              <Headphones className="w-3.5 h-3.5 text-cyan-400" />
+              Auto-Listen Active • Speak naturally without holding buttons
             </span>
           )}
         </div>
-
-        <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
-          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-emerald-400" : isWakingServer ? "bg-amber-400 animate-pulse" : "bg-slate-500"}`} />
-          {isConnected ? "Engine Online" : isWakingServer ? "Waking Up" : "Connecting"}
-        </span>
       </div>
 
-      {/* Center Void Replacement: Live Audio Visualizer / Mic Orb */}
-      {messages.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-4">
-          <div className="relative group">
-            {/* Glowing Orb Rings */}
-            <div
-              className={`w-28 h-28 rounded-full flex items-center justify-center transition-all duration-300 relative ${
-                isPlaying
-                  ? "bg-gradient-to-tr from-emerald-500/20 via-teal-500/20 to-emerald-500/10 border-2 border-emerald-400/50 shadow-[0_0_40px_rgba(16,185,129,0.3)] scale-105"
-                  : isSpeaking
-                  ? "bg-gradient-to-tr from-cyan-500/30 via-teal-500/30 to-blue-500/20 border-2 border-cyan-400/60 shadow-[0_0_50px_rgba(6,182,212,0.45)] scale-110"
-                  : "bg-slate-900/60 border border-white/10 shadow-xl"
-              }`}
-            >
-              {isPlaying ? (
-                <Volume2 className="w-12 h-12 text-emerald-400 animate-pulse" />
-              ) : isSpeaking ? (
-                <Radio className="w-12 h-12 text-cyan-400 animate-bounce" />
-              ) : (
-                <Headphones className="w-12 h-12 text-cyan-400/80" />
-              )}
-            </div>
-
-            {/* Radiant Breathing Ring */}
-            <div
-              className={`absolute -inset-3 rounded-full blur-xl pointer-events-none transition-opacity duration-300 ${
-                isPlaying
-                  ? "bg-emerald-500/25 opacity-100"
-                  : isSpeaking
-                  ? "bg-cyan-500/30 opacity-100"
-                  : "bg-cyan-500/10 opacity-40"
-              }`}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1 max-w-xs">
-            <h3 className="text-base font-bold text-white tracking-wide">
-              {currentStatus.title}
-            </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              {currentStatus.subtitle}
-            </p>
-          </div>
-
-          {!partnerConnected && (
-            <button
-              onClick={handleCopyRoomLink}
-              className="mt-1 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-xs font-semibold text-cyan-300 transition-all active:scale-95 shadow-sm"
-            >
-              {copiedRoom ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5 text-cyan-400" />}
-              {copiedRoom ? "Invite Copied!" : "Share Room Invite Link"}
-            </button>
-          )}
-        </div>
-      ) : (
-        /* Bilingual Chat Stream */
-        <div
-          ref={chatScrollRef}
-          className="flex-1 overflow-y-auto px-4 py-3 space-y-3.5 scroll-smooth"
+      {/* Bottom Phone Call Control Dock (Mute, Speaker, End Call) */}
+      <footer className="w-full max-w-xs mx-auto flex items-center justify-around z-20 pt-2">
+        {/* Mute Mic Button */}
+        <button
+          onClick={() => setIsMuted(!isMuted)}
+          className={`flex flex-col items-center gap-1.5 group transition active:scale-95`}
+          title={isMuted ? "Unmute Mic" : "Mute Mic"}
         >
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex flex-col ${msg.isSelf ? "items-end" : "items-start"} gap-1.5 animate-in fade-in slide-in-from-bottom-2 duration-200`}
-            >
-              {/* Speaker Label */}
-              <div className="flex items-center gap-1.5 px-1.5 text-[10px] font-semibold text-slate-400">
-                <span className={msg.isSelf ? "text-cyan-400 font-bold" : "text-purple-400 font-bold"}>
-                  {msg.isSelf ? "You" : "Partner"}
-                </span>
-                <span>•</span>
-                <span className="text-slate-300">{msg.sourceLang}</span>
-                <span>➔</span>
-                <span className="text-emerald-400">{msg.targetLang}</span>
-                <span>•</span>
-                <span className="text-slate-500 font-mono">{msg.timestamp}</span>
-              </div>
-
-              {/* Chat Bubble Container */}
-              <div
-                className={`max-w-[88%] rounded-2xl p-4 shadow-xl flex flex-col gap-2 transition-all relative group ${
-                  msg.isSelf
-                    ? "bg-gradient-to-br from-cyan-950/70 via-slate-900/90 to-slate-900 border border-cyan-500/30 rounded-tr-sm text-slate-100 glow-cyan"
-                    : "bg-gradient-to-br from-purple-950/70 via-slate-900/90 to-slate-900 border border-purple-500/30 rounded-tl-sm text-white glow-purple"
-                }`}
-              >
-                {/* Translated Text (Hero text) */}
-                <div className="text-[15px] font-semibold leading-relaxed tracking-normal text-white">
-                  {msg.translatedText}
-                </div>
-
-                {/* Original Transcription Strip */}
-                <div className="text-xs text-slate-400 italic border-t border-white/10 pt-2 flex items-center justify-between gap-2.5">
-                  <span className="truncate">&ldquo;{msg.originalText}&rdquo;</span>
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => handleCopyMessage(msg.id, msg.translatedText)}
-                      className="p-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 hover:text-white transition active:scale-90"
-                      title="Copy translated text"
-                    >
-                      {copiedId === msg.id ? (
-                        <Check className="w-3 h-3 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3 h-3 text-slate-400" />
-                      )}
-                    </button>
-
-                    {msg.audioBase64 && (
-                      <button
-                        onClick={() => onReplayAudio(msg.audioBase64!)}
-                        className="p-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 transition active:scale-90 flex items-center gap-1 shadow-sm"
-                        title="Replay translated speech in earbuds"
-                      >
-                        <Play className="w-3 h-3 fill-current text-cyan-400" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Bottom Audio Interaction Control Dock */}
-      <div className="px-4 pt-2.5 pb-2 border-t border-white/10 bg-slate-950/90 backdrop-blur-2xl flex flex-col items-center gap-3 shadow-2xl">
-        {/* Dynamic Spectrum Waveform Visualizer */}
-        <AudioVisualizer isSpeaking={isSpeaking} isPlaying={isPlaying} audioLevel={audioLevel} />
-
-        {/* Audio Input Controller */}
-        {mode === "vad" ? (
-          <div className="flex items-center justify-center gap-2 py-1">
-            <div
-              className={`flex items-center gap-2.5 px-6 py-3 rounded-full border text-xs font-bold tracking-wide transition-all duration-200 ${
-                isSpeaking
-                  ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.8)] scale-105"
-                  : isPlaying
-                  ? "bg-emerald-950/60 text-emerald-400 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                  : "glass-pill text-slate-300 border-white/10"
-              }`}
-            >
-              <Mic className={`w-4 h-4 ${isSpeaking ? "animate-bounce text-slate-950" : "text-cyan-400"}`} />
-              <span>
-                {isPlaying
-                  ? "Partner Speaking (Echo-Guard)"
-                  : isSpeaking
-                  ? "Speaking..."
-                  : "Auto-Listen (VAD Active)"}
-              </span>
-            </div>
+          <div
+            className={`w-14 h-14 rounded-full flex items-center justify-center border transition shadow-lg ${
+              isMuted
+                ? "bg-rose-500/20 border-rose-500/50 text-rose-300"
+                : "bg-slate-900 border-slate-700/80 text-slate-300 hover:text-white hover:border-slate-500"
+            }`}
+          >
+            {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
           </div>
-        ) : (
-          <div className="w-full flex flex-col items-center gap-2">
-            <button
-              onMouseDown={startHoldToTalk}
-              onMouseUp={stopHoldToTalk}
-              onMouseLeave={stopHoldToTalk}
-              onTouchStart={startHoldToTalk}
-              onTouchEnd={stopHoldToTalk}
-              disabled={isPlaying}
-              className={`w-full max-w-sm py-4 px-6 rounded-2xl font-black text-sm tracking-wider uppercase flex items-center justify-center gap-3 transition-all select-none shadow-2xl active:scale-95 ${
-                isPlaying
-                  ? "bg-slate-900 border border-slate-800 text-slate-500 cursor-not-allowed"
-                  : isSpeaking
-                  ? "bg-gradient-to-r from-rose-500 via-red-500 to-pink-500 text-white shadow-rose-500/50 scale-[1.02] ring-4 ring-rose-500/30"
-                  : "bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-slate-950 shadow-cyan-500/25"
-              }`}
-            >
-              <Mic className={`w-5 h-5 ${isSpeaking ? "animate-pulse" : "text-slate-950"}`} />
-              <span>
-                {isPlaying
-                  ? "Echo-Guard Active"
-                  : isSpeaking
-                  ? "Release to Send"
-                  : "Hold to Talk"}
-              </span>
-            </button>
-            <span className="text-[11px] text-slate-400 font-medium">
-              Hold while speaking • Release to translate
-            </span>
+          <span className="text-[11px] font-medium text-slate-400">
+            {isMuted ? "Unmute" : "Mute"}
+          </span>
+        </button>
+
+        {/* Red End Call Button */}
+        <button
+          onClick={onLeaveRoom}
+          className="flex flex-col items-center gap-1.5 transition active:scale-95"
+          title="End Call"
+        >
+          <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 flex items-center justify-center shadow-xl shadow-rose-600/40 text-white transition">
+            <PhoneOff className="w-7 h-7" />
           </div>
-        )}
-      </div>
+          <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider">
+            End
+          </span>
+        </button>
+
+        {/* Speaker / Earbuds Toggle */}
+        <button
+          onClick={() => setIsSpeakerOn(!isSpeakerOn)}
+          className="flex flex-col items-center gap-1.5 group transition active:scale-95"
+          title={isSpeakerOn ? "Speaker Output" : "Earbuds Output"}
+        >
+          <div
+            className={`w-14 h-14 rounded-full flex items-center justify-center border transition shadow-lg ${
+              isSpeakerOn
+                ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-300"
+                : "bg-slate-900 border-slate-700/80 text-slate-400 hover:text-white hover:border-slate-500"
+            }`}
+          >
+            {isSpeakerOn ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
+          </div>
+          <span className="text-[11px] font-medium text-slate-400">
+            {isSpeakerOn ? "Speaker" : "Earbuds"}
+          </span>
+        </button>
+      </footer>
     </div>
   );
 }

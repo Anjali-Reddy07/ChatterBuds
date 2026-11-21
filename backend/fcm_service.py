@@ -7,10 +7,15 @@ and rings the recipient device with action buttons.
 import os
 import json
 import logging
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
 logger = logging.getLogger("chatterbuds.fcm")
+
+
+def encode_safe(val: str) -> str:
+    return urllib.parse.quote(str(val))
 
 _firebase_initialized = False
 _firestore_db = None
@@ -63,7 +68,49 @@ def init_firebase_admin():
 class FCMService:
     def __init__(self):
         self.in_memory_tokens: Dict[str, str] = {}
+        self.in_memory_profiles: Dict[str, dict] = {}
         init_firebase_admin()
+
+    async def save_user_profile(self, phone_number: str, data: dict) -> bool:
+        """Save Truecaller name, language preference, and metadata to Firestore users collection."""
+        if not phone_number:
+            return False
+        clean_phone = phone_number.strip()
+        existing = self.in_memory_profiles.get(clean_phone, {})
+        existing.update(data)
+        existing["phoneNumber"] = clean_phone
+        existing["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        self.in_memory_profiles[clean_phone] = existing
+
+        global _firestore_db
+        if _firestore_db:
+            try:
+                doc_ref = _firestore_db.collection("users").document(clean_phone)
+                doc_ref.set(existing, merge=True)
+                logger.info(f"User profile saved to Firestore users/{clean_phone}")
+                return True
+            except Exception as e:
+                logger.warning(f"Could not persist user profile to Firestore: {e}")
+        return True
+
+    async def get_user_profile(self, phone_number: str) -> Optional[dict]:
+        """Lookup registered user profile including Truecaller name from in-memory cache or Firestore."""
+        clean_phone = phone_number.strip()
+        if clean_phone in self.in_memory_profiles:
+            return self.in_memory_profiles[clean_phone]
+
+        global _firestore_db
+        if _firestore_db:
+            try:
+                doc_ref = _firestore_db.collection("users").document(clean_phone)
+                doc = doc_ref.get()
+                if doc.exists:
+                    profile = doc.to_dict()
+                    self.in_memory_profiles[clean_phone] = profile
+                    return profile
+            except Exception as e:
+                logger.warning(f"Error reading user profile for {clean_phone}: {e}")
+        return None
 
     async def register_device_token(self, phone_number: str, fcm_token: str) -> bool:
         """
@@ -125,6 +172,7 @@ class FCMService:
         from_phone: str,
         room_id: str,
         caller_lang: str = "English",
+        caller_name: Optional[str] = None,
     ) -> bool:
         """
         Sends high-priority FCM push notification to callee device.
@@ -138,7 +186,8 @@ class FCMService:
         try:
             from firebase_admin import messaging
 
-            click_url = f"/?incomingRoom={room_id}&caller={from_phone}&autoJoin=1"
+            display_caller = caller_name if caller_name else from_phone
+            click_url = f"/?incomingRoom={room_id}&caller={from_phone}&callerName={encode_safe(display_caller)}&autoJoin=1"
 
             message = messaging.Message(
                 token=token,
@@ -146,13 +195,14 @@ class FCMService:
                     "type": "INCOMING_CALL",
                     "roomId": str(room_id),
                     "callerNumber": str(from_phone),
+                    "callerName": str(display_caller),
                     "callerLang": str(caller_lang),
                     "clickAction": click_url,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
                 notification=messaging.Notification(
                     title="Incoming Translation Call",
-                    body=f"{from_phone} is calling you on ChatterBuds. Tap to accept.",
+                    body=f"{display_caller} is calling you on ChatterBuds. Tap to accept.",
                 ),
                 android=messaging.AndroidConfig(
                     priority="high",
