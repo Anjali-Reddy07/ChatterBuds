@@ -18,8 +18,13 @@ import {
   ChevronDown,
   ChevronUp,
   SlidersHorizontal,
+  Smartphone,
+  PhoneCall,
+  QrCode,
+  Link2,
 } from "lucide-react";
 import { ConversationMode } from "@/hooks/useAudioRecorder";
+import { DialPad, COUNTRY_CODES } from "./DialPad";
 
 export const AVAILABLE_LANGUAGES = [
   { code: "Auto-Detect", name: "Auto-Detect", native: "✨ Whisper AI", flag: "🌐" },
@@ -51,6 +56,11 @@ interface RoomSetupProps {
   onSelectLang: (lang: string) => void;
   conversationMode: ConversationMode;
   onSelectConversationMode: (mode: ConversationMode) => void;
+  myPhone: string;
+  onSetMyPhone: (phone: string) => void;
+  isPresenceConnected?: boolean;
+  onCallPhone?: (targetPhone: string) => void;
+  isCalling?: boolean;
   wsUrl: string;
   onSetWsUrl: (url: string) => void;
   onJoinRoom: () => void;
@@ -65,6 +75,11 @@ export function RoomSetup({
   onSelectLang,
   conversationMode,
   onSelectConversationMode,
+  myPhone,
+  onSetMyPhone,
+  isPresenceConnected,
+  onCallPhone,
+  isCalling,
   wsUrl,
   onSetWsUrl,
   onJoinRoom,
@@ -76,6 +91,7 @@ export function RoomSetup({
   const [showRemoteQr, setShowRemoteQr] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [isRotating, setIsRotating] = useState(false);
+  const [pairingTab, setPairingTab] = useState<"dialer" | "qr" | "link">("dialer");
 
   const generateRandomCode = () => {
     setIsRotating(true);
@@ -245,6 +261,39 @@ export function RoomSetup({
         </div>
       </div>
 
+      {/* IDENTITY: My Callable Mobile Number */}
+      <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Smartphone className="w-4 h-4 text-emerald-400" />
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+              My Mobile Number (Callable ID)
+            </h2>
+          </div>
+          {isPresenceConnected ? (
+            <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Callable Online
+            </span>
+          ) : (
+            <span className="text-[10px] text-slate-400 font-medium">
+              Enter number to be called
+            </span>
+          )}
+        </div>
+
+        <input
+          type="tel"
+          value={myPhone}
+          onChange={(e) => onSetMyPhone(e.target.value)}
+          placeholder="+91 98765 43210"
+          className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs font-mono font-semibold text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-400 transition"
+        />
+        <p className="text-[10px] text-slate-400 leading-tight">
+          Enables your partner to call and translate into your earbuds directly by dialing your phone number.
+        </p>
+      </div>
+
       {/* STEP 1: Choose Your Language */}
       <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg">
         <div className="flex items-center gap-2 mb-2">
@@ -274,15 +323,15 @@ export function RoomSetup({
         </div>
       </div>
 
-      {/* STEP 2: Pair Partner's Phone (Dynamic based on Mode) */}
-      <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col items-center gap-2.5 text-center">
+      {/* STEP 2: Pair Partner's Phone (Dial by Number, Scan QR, or Share Link) */}
+      <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col items-center gap-3 text-center">
         <div className="w-full flex items-center justify-between border-b border-white/10 pb-2">
           <div className="flex items-center gap-2">
             <div className="w-5 h-5 rounded-md bg-purple-500/20 border border-purple-500/40 text-purple-400 font-bold text-[11px] flex items-center justify-center shrink-0">
               2
             </div>
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-              {conversationMode === "in-person" ? "Step 2: Scan QR to Pair" : "Step 2: Share Room Link"}
+              Step 2: Connect Partner
             </h2>
           </div>
 
@@ -296,9 +345,51 @@ export function RoomSetup({
           </button>
         </div>
 
+        {/* 3-Tab Segmented Switcher */}
+        <div className="grid grid-cols-3 gap-1 p-1 bg-slate-900/90 border border-slate-800 rounded-xl w-full">
+          <button
+            type="button"
+            onClick={() => setPairingTab("dialer")}
+            className={`py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all ${
+              pairingTab === "dialer"
+                ? "bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-md shadow-emerald-500/20"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <PhoneCall className="w-3 h-3" />
+            <span>Dial Pad</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPairingTab("qr")}
+            className={`py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all ${
+              pairingTab === "qr"
+                ? "bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 shadow-md shadow-cyan-500/20"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <QrCode className="w-3 h-3" />
+            <span>Scan QR</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPairingTab("link")}
+            className={`py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all ${
+              pairingTab === "link"
+                ? "bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-md shadow-purple-500/20"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            <Link2 className="w-3 h-3" />
+            <span>Share Link</span>
+          </button>
+        </div>
+
         {/* Room Code Badge */}
         <div className="flex items-center justify-center gap-2">
-          <span className="text-xl font-black tracking-[0.2em] text-cyan-400 font-mono">
+          <span className="text-base font-black tracking-[0.2em] text-cyan-400 font-mono">
             #{roomCode}
           </span>
           <button
@@ -310,10 +401,22 @@ export function RoomSetup({
           </button>
         </div>
 
-        {/* Dynamic Display based on Mode */}
-        {conversationMode === "in-person" ? (
-          /* IN-PERSON: Large QR Front and Center */
-          <div className="flex flex-col items-center gap-2 w-full">
+        {/* TAB 1: DIAL PAD */}
+        {pairingTab === "dialer" && (
+          <div className="w-full pt-1">
+            <DialPad
+              onCall={(to) => {
+                if (onCallPhone) onCallPhone(to);
+              }}
+              partnerLangName={selectedLang}
+              isCalling={isCalling}
+            />
+          </div>
+        )}
+
+        {/* TAB 2: QR CODE */}
+        {pairingTab === "qr" && (
+          <div className="flex flex-col items-center gap-2.5 w-full py-1 animate-in fade-in duration-200">
             <div className="p-2.5 bg-white rounded-2xl shadow-xl">
               {shareUrl ? (
                 <QRCodeSVG value={shareUrl} size={135} level="H" includeMargin={false} fgColor="#05070e" />
@@ -342,9 +445,11 @@ export function RoomSetup({
               </button>
             </div>
           </div>
-        ) : (
-          /* LONG-DISTANCE: Big Share Buttons Prominently, Collapsible QR */
-          <div className="flex flex-col items-center gap-2.5 w-full">
+        )}
+
+        {/* TAB 3: SHARE LINK */}
+        {pairingTab === "link" && (
+          <div className="flex flex-col items-center gap-2.5 w-full py-1 animate-in fade-in duration-200">
             <button
               onClick={handleShare}
               className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:brightness-110 text-white font-bold text-xs tracking-wide flex items-center justify-center gap-2 shadow-lg shadow-purple-500/25 transition active:scale-[0.98]"
@@ -355,28 +460,11 @@ export function RoomSetup({
 
             <button
               onClick={handleCopyLink}
-              className="w-full py-2 px-3 rounded-xl glass-pill hover:border-cyan-500/40 text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 transition active:scale-98"
+              className="w-full py-2.5 px-3 rounded-xl glass-pill hover:border-cyan-500/40 text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 transition active:scale-98"
             >
               {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-cyan-400" />}
               <span>{copiedLink ? "Link Copied to Clipboard!" : "Copy Room Link"}</span>
             </button>
-
-            {/* Collapsible QR Drawer for Remote Users */}
-            <div className="w-full pt-1">
-              <button
-                onClick={() => setShowRemoteQr(!showRemoteQr)}
-                className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 mx-auto transition"
-              >
-                <span>{showRemoteQr ? "Hide QR Code" : "Show QR Code (Optional)"}</span>
-                {showRemoteQr ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-              </button>
-
-              {showRemoteQr && (
-                <div className="mt-2 p-2 bg-white rounded-xl shadow-lg inline-block animate-in fade-in zoom-in-95">
-                  <QRCodeSVG value={shareUrl} size={110} level="H" fgColor="#05070e" />
-                </div>
-              )}
-            </div>
           </div>
         )}
       </div>

@@ -4,8 +4,10 @@ import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { RoomSetup } from "@/components/RoomSetup";
 import { LiveConversation } from "@/components/LiveConversation";
+import { CallOverlay } from "@/components/CallOverlay";
 import { useChatterWebSocket } from "@/hooks/useChatterWebSocket";
 import { useAudioRecorder, AudioMode, ConversationMode } from "@/hooks/useAudioRecorder";
+import { useCallSignaling } from "@/hooks/useCallSignaling";
 import {
   Headphones,
   ExternalLink,
@@ -123,6 +125,9 @@ function ChatterBudsApp() {
   const [conversationMode, setConversationMode] = useState<ConversationMode>("in-person");
   const [mode, setMode] = useState<AudioMode>("vad");
 
+  // Mobile Number Identity for Call Signaling
+  const [myPhone, setMyPhone] = useState("+91");
+
   // In-App Browser (Instagram / WhatsApp WebView) Guard
   const [isInAppBrowser, setIsInAppBrowser] = useState(false);
   const [dismissInAppBanner, setDismissInAppBanner] = useState(false);
@@ -157,12 +162,46 @@ function ChatterBudsApp() {
         setConversationMode(savedConvMode);
       }
 
+      // Check stored phone number
+      const savedPhone = localStorage.getItem("chatterbuds_my_phone");
+      if (savedPhone && savedPhone.trim().length > 0) {
+        setMyPhone(savedPhone.trim());
+      }
+
       // Resolve valid, auto-sanitized WebSocket URL
       const resolvedWs = resolveValidWsUrl();
       setWsUrl(resolvedWs);
       setTempWsUrl(resolvedWs);
     }
   }, [searchParams]);
+
+  const handleSetMyPhone = (phone: string) => {
+    setMyPhone(phone);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("chatterbuds_my_phone", phone);
+    }
+  };
+
+  // Call Signaling & Presence hook (incoming/outgoing calls with Web Audio ringtones)
+  const {
+    isPresenceConnected,
+    callState,
+    activeCall,
+    offlineNotice,
+    startCall,
+    acceptCall,
+    rejectCall,
+    cancelCall,
+    clearOfflineNotice,
+  } = useCallSignaling({
+    wsUrl,
+    myPhone,
+    myLang: selectedLang,
+    onCallAccepted: (acceptedRoomId) => {
+      setRoomCode(acceptedRoomId);
+      setScreen("live");
+    },
+  });
 
   // WebSocket connection hook
   const {
@@ -266,6 +305,11 @@ function ChatterBudsApp() {
               onSelectLang={setSelectedLang}
               conversationMode={conversationMode}
               onSelectConversationMode={handleSelectConversationMode}
+              myPhone={myPhone}
+              onSetMyPhone={handleSetMyPhone}
+              isPresenceConnected={isPresenceConnected}
+              onCallPhone={(targetPhone) => startCall(targetPhone, roomCode)}
+              isCalling={callState === "calling" || callState === "ringing"}
               wsUrl={wsUrl}
               onSetWsUrl={setWsUrl}
               onJoinRoom={handleJoinRoom}
@@ -355,9 +399,8 @@ function ChatterBudsApp() {
                     Advanced Server Override (Developers)
                   </span>
                   <ChevronDown
-                    className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
-                      showDevServerOverride ? "rotate-180" : ""
-                    }`}
+                    className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${showDevServerOverride ? "rotate-180" : ""
+                      }`}
                   />
                 </button>
 
@@ -405,6 +448,18 @@ function ChatterBudsApp() {
             </div>
           </div>
         )}
+
+        {/* Incoming & Outgoing Call Signaling Overlay */}
+        <CallOverlay
+          callState={callState}
+          activeCall={activeCall}
+          offlineNotice={offlineNotice}
+          myLang={selectedLang}
+          onAccept={acceptCall}
+          onReject={() => rejectCall("declined")}
+          onCancel={cancelCall}
+          onClearOfflineNotice={clearOfflineNotice}
+        />
       </div>
     </main>
   );

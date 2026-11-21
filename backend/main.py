@@ -13,6 +13,7 @@ from groq import Groq
 import edge_tts
 
 from room_manager import room_manager
+from call_manager import call_manager, normalize_phone_number
 from voices import get_tts_voice, get_whisper_code
 
 load_dotenv()
@@ -59,6 +60,38 @@ async def health_check():
         "groq_configured": groq_configured,
         "active_rooms": stats["active_rooms"],
         "total_connections": stats["total_connections"],
+        "active_presence_users": call_manager.get_active_count(),
+    }
+
+
+@app.post("/voice/outbound-call")
+async def outbound_cellular_call(payload: dict):
+    """
+    Outbound cellular call stub configured via Twilio for future PSTN bridging.
+    Accepts: { to_phone, from_phone, room_id, caller_lang }
+    """
+    to_phone = payload.get("to_phone", "")
+    from_phone = payload.get("from_phone", "")
+    room_id = payload.get("room_id", "")
+    caller_lang = payload.get("caller_lang", "English")
+
+    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_from = os.getenv("TWILIO_PHONE_NUMBER")
+
+    is_twilio_configured = bool(twilio_sid and twilio_token and twilio_from)
+
+    return {
+        "status": "queued" if is_twilio_configured else "stub_ready",
+        "message": (
+            f"Cellular call request received for {to_phone}. "
+            + ("Dispatching via Twilio Voice API." if is_twilio_configured else "Twilio credentials pending in environment variables.")
+        ),
+        "to_phone": to_phone,
+        "from_phone": from_phone,
+        "room_id": room_id,
+        "caller_lang": caller_lang,
+        "twilio_configured": is_twilio_configured,
     }
 
 
@@ -301,6 +334,102 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                 })
             except Exception:
                 pass
+
+
+@app.websocket("/ws/presence/{phone_number}")
+async def presence_websocket(websocket: WebSocket, phone_number: str):
+    """
+    Real-time presence directory & call signaling WebSocket.
+    Allows users to register their mobile number, receive incoming calls,
+    and route call_invite, call_accept, call_reject, and call_end signals.
+    """
+    await websocket.accept()
+    norm_phone = await call_manager.register_presence(phone_number, websocket)
+    if not norm_phone:
+        await websocket.close(code=4000, reason="Invalid phone number format")
+        return
+
+    # Acknowledge successful registration to the client
+    try:
+        await websocket.send_json({
+            "event": "presence_registered",
+            "phone_number": norm_phone,
+            "status": "online",
+        })
+    except Exception:
+        pass
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            event = data.get("event")
+            msg_type = data.get("type")
+
+            # Keepalive ping
+            if msg_type == "ping" or event == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
+            # 1. Call Invite (Caller -> Callee)
+            if event == "call_invite":
+                from_phone = data.get("from_phone", norm_phone)
+                to_phone = data.get("to_phone", "")
+                room_id = data.get("room_id", "")
+                caller_lang = data.get("caller_lang", "English")
+                await call_manager.handle_call_invite(
+                    caller_ws=websocket,
+                    from_phone=from_phone,
+                    to_phone=to_phone,
+                    room_id=room_id,
+                    caller_lang=caller_lang,
+                )
+
+            # 2. Call Accept (Callee -> Caller)
+            elif event == "call_accept":
+                room_id = data.get("room_id", "")
+                from_phone = data.get("from_phone", "")
+                to_phone = data.get("to_phone", norm_phone)
+                callee_lang = data.get("callee_lang", "English")
+                await call_manager.handle_call_accept(
+                    callee_ws=websocket,
+                    room_id=room_id,
+                    from_phone=from_phone,
+                    to_phone=to_phone,
+                    callee_lang=callee_lang,
+                )
+
+            # 3. Call Reject (Callee -> Caller)
+            elif event == "call_reject":
+                room_id = data.get("room_id", "")
+                from_phone = data.get("from_phone", "")
+                to_phone = data.get("to_phone", norm_phone)
+                reason = data.get("reason", "declined")
+                await call_manager.handle_call_reject(
+                    callee_ws=websocket,
+                    room_id=room_id,
+                    from_phone=from_phone,
+                    to_phone=to_phone,
+                    reason=reason,
+                )
+
+            # 4. Call End (Either party ends ringing or active call)
+            elif event == "call_end":
+                room_id = data.get("room_id", "")
+                from_phone = data.get("from_phone", norm_phone)
+                to_phone = data.get("to_phone", "")
+                await call_manager.handle_call_end(
+                    sender_ws=websocket,
+                    room_id=room_id,
+                    from_phone=from_phone,
+                    to_phone=to_phone,
+                )
+
+    except WebSocketDisconnect:
+        logger.info(f"Presence WebSocket disconnected: {norm_phone}")
+    except Exception as e:
+        logger.error(f"Presence WebSocket error for {norm_phone}: {e}")
+    finally:
+        await call_manager.unregister_presence(websocket)
 
 
 if __name__ == "__main__":
