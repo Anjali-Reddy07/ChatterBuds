@@ -3,22 +3,19 @@
 import React, { useRef, useEffect, useState } from "react";
 import {
   ArrowLeft,
-  Users,
   Mic,
-  MicOff,
   Volume2,
-  VolumeX,
   Radio,
-  Sliders,
-  Sparkles,
   Play,
-  RotateCcw,
-  ShieldCheck,
   Copy,
   Check,
   Share2,
   Headphones,
-  Zap,
+  Sparkles,
+  Loader2,
+  Settings2,
+  ShieldCheck,
+  AlertCircle,
 } from "lucide-react";
 import { AudioMode } from "@/hooks/useAudioRecorder";
 import { ChatMessage } from "@/hooks/useChatterWebSocket";
@@ -42,9 +39,13 @@ interface LiveConversationProps {
   // WebSocket State
   isConnected: boolean;
   connectionError: string | null;
+  isWakingServer?: boolean;
+  wakeAttempt?: number;
+  isLocalhostIssue?: boolean;
   messages: ChatMessage[];
   isPlaying: boolean;
   onReplayAudio: (base64Audio: string) => void;
+  onOpenSettings?: () => void;
 }
 
 export function LiveConversation({
@@ -63,9 +64,13 @@ export function LiveConversation({
   stopHoldToTalk,
   isConnected,
   connectionError,
+  isWakingServer,
+  wakeAttempt = 0,
+  isLocalhostIssue,
   messages,
   isPlaying,
   onReplayAudio,
+  onOpenSettings,
 }: LiveConversationProps) {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -99,9 +104,44 @@ export function LiveConversation({
     }
   };
 
+  // Determine contextual center status text
+  const getContextualText = () => {
+    if (isPlaying) {
+      return {
+        title: "Playing Translation",
+        subtitle: `Speaking in your earbuds • Echo-Guard Active`,
+        status: "playing",
+      };
+    }
+    if (isSpeaking) {
+      return {
+        title: "Listening to You...",
+        subtitle: `Streaming ${myLang} to Whisper Turbo AI`,
+        status: "speaking",
+      };
+    }
+    if (!partnerConnected) {
+      return {
+        title: "Waiting for Partner",
+        subtitle: `Share room #${roomCode} to connect partner's phone`,
+        status: "waiting",
+      };
+    }
+    return {
+      title: mode === "vad" ? "Ready to Listen" : "Ready to Talk",
+      subtitle:
+        mode === "vad"
+          ? `Speak naturally in ${myLang} — pauses translate automatically`
+          : `Press & hold the button below to speak in ${myLang}`,
+      status: "ready",
+    };
+  };
+
+  const currentStatus = getContextualText();
+
   return (
     <div className="flex flex-col h-[100dvh] max-h-[100dvh] justify-between pb-2 bg-gradient-to-b from-slate-950 via-[#070a14] to-slate-950">
-      {/* Top Header & Dynamic Telemetry Bar */}
+      {/* Top Header */}
       <header className="p-3 bg-slate-950/80 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between sticky top-0 z-30 shadow-md">
         <button
           onClick={onLeaveRoom}
@@ -126,7 +166,7 @@ export function LiveConversation({
             </span>
           </div>
 
-          {/* Live Partner Status Indicator */}
+          {/* Partner Status Pill */}
           <div className="flex items-center gap-1.5">
             {partnerConnected ? (
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400">
@@ -140,13 +180,13 @@ export function LiveConversation({
                 title="Tap to copy invite link"
               >
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping-slow shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
-                <span>Waiting for partner... (Tap to invite)</span>
+                <span>Waiting for partner (Tap to invite)</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Audio Mode Toggle */}
+        {/* Mode Switcher */}
         <div className="flex items-center bg-slate-900/90 border border-slate-700/80 rounded-xl p-1 shadow-inner">
           <button
             onClick={() => onSetMode("vad")}
@@ -173,20 +213,55 @@ export function LiveConversation({
         </div>
       </header>
 
-      {/* Connection Error Banner */}
-      {connectionError && (
-        <div className="bg-rose-500/10 border-b border-rose-500/25 px-4 py-2 text-xs text-rose-300 text-center font-semibold flex items-center justify-center gap-1.5 animate-in slide-in-from-top duration-200">
-          <span>⚠️ {connectionError}</span>
+      {/* Render Cold-Start Wakeup Card */}
+      {isWakingServer && !isConnected && (
+        <div className="mx-4 mt-3 p-3.5 rounded-2xl bg-gradient-to-r from-cyan-950/60 to-slate-900 border border-cyan-500/30 text-xs text-slate-200 flex items-center justify-between shadow-lg animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5">
+            <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
+            <div>
+              <span className="font-semibold text-cyan-300 block">Waking up translation server...</span>
+              <span className="text-[11px] text-slate-400">
+                Render free tier spins up in ~30s on first load (attempt {wakeAttempt})
+              </span>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Live Audio Status Strip */}
+      {/* Connection Issue Card (Friendly Helper) */}
+      {connectionError && !isWakingServer && !isConnected && (
+        <div className="mx-4 mt-3 p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/30 text-xs text-amber-200 flex flex-col gap-2 shadow-lg animate-in fade-in duration-200">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-semibold text-amber-300 block">Connecting to Voice Engine</span>
+              <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+                {isLocalhostIssue
+                  ? "This phone is attempting to connect to 'localhost'. Please set your public Render or Tunnel URL."
+                  : connectionError}
+              </p>
+            </div>
+          </div>
+
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="self-end px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[11px] font-bold text-amber-200 flex items-center gap-1.5 transition active:scale-95"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              Set Backend Server URL
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Echo-Guard Live Strip */}
       <div className="px-4 py-1.5 bg-slate-950/40 border-b border-white/5 flex items-center justify-between text-[11px] text-slate-400 backdrop-blur-md">
         <div className="flex items-center gap-2">
           {isPlaying ? (
             <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
               <Volume2 className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
-              Echo-Guard: Playing in Earbuds
+              Echo-Guard: Playing in Earbuds (Mic Muted)
             </span>
           ) : isSpeaking ? (
             <span className="text-cyan-400 font-semibold flex items-center gap-1.5">
@@ -196,59 +271,85 @@ export function LiveConversation({
           ) : (
             <span className="flex items-center gap-1.5 text-slate-400">
               <Headphones className="w-3.5 h-3.5 text-slate-500" />
-              {mode === "vad" ? "Auto-Listen (0.75s silence slice)" : "Press Hold-to-Talk to speak"}
+              {mode === "vad" ? "Auto-Listen (0.75s silence pause)" : "Press Hold-to-Talk to speak"}
             </span>
           )}
         </div>
 
         <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
-          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-emerald-400" : "bg-rose-400"}`} />
-          {isConnected ? "WSS Online" : "Connecting"}
+          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-emerald-400" : isWakingServer ? "bg-amber-400 animate-pulse" : "bg-slate-500"}`} />
+          {isConnected ? "Engine Online" : isWakingServer ? "Waking Up" : "Connecting"}
         </span>
       </div>
 
-      {/* Bilingual Chat Stream */}
-      <div
-        ref={chatScrollRef}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scroll-smooth"
-      >
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 gap-3">
-            <div className="relative group">
-              <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-cyan-500/20 via-purple-500/20 to-teal-500/20 border border-white/10 flex items-center justify-center shadow-xl backdrop-blur-sm">
-                <Headphones className="w-8 h-8 text-cyan-400 animate-float" />
-              </div>
-              <div className="absolute -inset-1 rounded-3xl bg-cyan-500/10 blur-xl pointer-events-none" />
+      {/* Center Void Replacement: Live Audio Visualizer / Mic Orb */}
+      {messages.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-4">
+          <div className="relative group">
+            {/* Glowing Orb Rings */}
+            <div
+              className={`w-28 h-28 rounded-full flex items-center justify-center transition-all duration-300 relative ${
+                isPlaying
+                  ? "bg-gradient-to-tr from-emerald-500/20 via-teal-500/20 to-emerald-500/10 border-2 border-emerald-400/50 shadow-[0_0_40px_rgba(16,185,129,0.3)] scale-105"
+                  : isSpeaking
+                  ? "bg-gradient-to-tr from-cyan-500/30 via-teal-500/30 to-blue-500/20 border-2 border-cyan-400/60 shadow-[0_0_50px_rgba(6,182,212,0.45)] scale-110"
+                  : "bg-slate-900/60 border border-white/10 shadow-xl"
+              }`}
+            >
+              {isPlaying ? (
+                <Volume2 className="w-12 h-12 text-emerald-400 animate-pulse" />
+              ) : isSpeaking ? (
+                <Radio className="w-12 h-12 text-cyan-400 animate-bounce" />
+              ) : (
+                <Headphones className="w-12 h-12 text-cyan-400/80" />
+              )}
             </div>
 
-            <div className="flex flex-col gap-1 max-w-xs">
-              <p className="text-sm font-bold text-white tracking-wide">Live Translation Channel Ready</p>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                {partnerConnected
-                  ? `Speak in ${myLang} into your Bluetooth earbuds — partner will hear natural translated voice in real time!`
-                  : `Waiting for partner to join room #${roomCode}. Scan QR code or share the invite link to pair.`}
-              </p>
-            </div>
-
-            {!partnerConnected && (
-              <button
-                onClick={handleCopyRoomLink}
-                className="mt-2 flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-xs font-semibold text-cyan-300 transition-all active:scale-95 shadow-sm"
-              >
-                {copiedRoom ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5 text-cyan-400" />}
-                {copiedRoom ? "Invite Copied!" : "Share Room Invite"}
-              </button>
-            )}
+            {/* Radiant Breathing Ring */}
+            <div
+              className={`absolute -inset-3 rounded-full blur-xl pointer-events-none transition-opacity duration-300 ${
+                isPlaying
+                  ? "bg-emerald-500/25 opacity-100"
+                  : isSpeaking
+                  ? "bg-cyan-500/30 opacity-100"
+                  : "bg-cyan-500/10 opacity-40"
+              }`}
+            />
           </div>
-        ) : (
-          messages.map((msg) => (
+
+          <div className="flex flex-col gap-1 max-w-xs">
+            <h3 className="text-base font-bold text-white tracking-wide">
+              {currentStatus.title}
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              {currentStatus.subtitle}
+            </p>
+          </div>
+
+          {!partnerConnected && (
+            <button
+              onClick={handleCopyRoomLink}
+              className="mt-1 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-xs font-semibold text-cyan-300 transition-all active:scale-95 shadow-sm"
+            >
+              {copiedRoom ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5 text-cyan-400" />}
+              {copiedRoom ? "Invite Copied!" : "Share Room Invite Link"}
+            </button>
+          )}
+        </div>
+      ) : (
+        /* Bilingual Chat Stream */
+        <div
+          ref={chatScrollRef}
+          className="flex-1 overflow-y-auto px-4 py-3 space-y-3.5 scroll-smooth"
+        >
+          {messages.map((msg) => (
             <div
               key={msg.id}
               className={`flex flex-col ${msg.isSelf ? "items-end" : "items-start"} gap-1.5 animate-in fade-in slide-in-from-bottom-2 duration-200`}
             >
-              {/* Message Header Meta */}
+              {/* Speaker Label */}
               <div className="flex items-center gap-1.5 px-1.5 text-[10px] font-semibold text-slate-400">
-                <span className={msg.isSelf ? "text-cyan-400" : "text-purple-400"}>
+                <span className={msg.isSelf ? "text-cyan-400 font-bold" : "text-purple-400 font-bold"}>
                   {msg.isSelf ? "You" : "Partner"}
                 </span>
                 <span>•</span>
@@ -302,9 +403,9 @@ export function LiveConversation({
                 </div>
               </div>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Bottom Audio Interaction Control Dock */}
       <div className="px-4 pt-2.5 pb-2 border-t border-white/10 bg-slate-950/90 backdrop-blur-2xl flex flex-col items-center gap-3 shadow-2xl">
