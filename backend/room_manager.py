@@ -63,6 +63,16 @@ class RoomManager:
                     return p
             return None
 
+    async def broadcast_to_room(self, room_id: str, message: dict):
+        """Broadcast a JSON message to all participants in a room."""
+        async with self._lock:
+            participants = list(self.rooms.get(room_id, []))
+        for p in participants:
+            try:
+                await p.websocket.send_json(message)
+            except Exception:
+                pass
+
     async def get_all_in_room(self, room_id: str) -> List[Participant]:
         """
         Retrieve all participants in a room.

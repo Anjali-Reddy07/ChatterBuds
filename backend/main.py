@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from groq import Groq
@@ -15,6 +15,18 @@ import edge_tts
 from room_manager import room_manager
 from call_manager import call_manager, normalize_phone_number
 from voices import get_tts_voice, get_whisper_code
+from fcm_service import fcm_service
+from twilio_stream import (
+    initiate_pstn_call,
+    broadcast_to_twilio_cellular,
+    active_twilio_sessions,
+    TwilioSession,
+)
+from audio_codec import (
+    mulaw_to_pcm16,
+    resample_linear_pcm,
+    pcm16_to_wav_bytes,
+)
 
 load_dotenv()
 
@@ -64,35 +76,57 @@ async def health_check():
     }
 
 
-@app.post("/voice/outbound-call")
-async def outbound_cellular_call(payload: dict):
+@app.post("/api/fcm/register")
+async def register_fcm_token_endpoint(payload: dict):
     """
-    Outbound cellular call stub configured via Twilio for future PSTN bridging.
-    Accepts: { to_phone, from_phone, room_id, caller_lang }
+    Registers the device's FCM push token for background / offline ringing.
+    Payload: { phoneNumber: "+91...", fcmToken: "..." }
     """
-    to_phone = payload.get("to_phone", "")
-    from_phone = payload.get("from_phone", "")
+    phone = payload.get("phoneNumber") or payload.get("phone") or ""
+    token = payload.get("fcmToken") or payload.get("token") or ""
+    if not phone or not token:
+        raise HTTPException(status_code=400, detail="Missing phoneNumber or fcmToken")
+
+    norm_phone = normalize_phone_number(phone)
+    success = await fcm_service.register_device_token(norm_phone, token)
+    return {"status": "ok", "phoneNumber": norm_phone, "registered": success}
+
+
+@app.post("/api/call/pstn")
+async def initiate_cellular_pstn_call(payload: dict, request: Request):
+    """
+    Tier 2: Initiates a direct Twilio Programmable Voice call with Bidirectional Media Streams
+    to dial any standard cellular mobile number.
+    Payload: { to_phone, from_phone, room_id, caller_lang, callee_lang }
+    """
+    to_phone = normalize_phone_number(payload.get("to_phone", ""))
+    from_phone = normalize_phone_number(payload.get("from_phone", ""))
     room_id = payload.get("room_id", "")
     caller_lang = payload.get("caller_lang", "English")
+    callee_lang = payload.get("callee_lang", "Hindi")
 
-    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
-    twilio_from = os.getenv("TWILIO_PHONE_NUMBER")
+    if not to_phone or not room_id:
+        raise HTTPException(status_code=400, detail="Missing to_phone or room_id")
 
-    is_twilio_configured = bool(twilio_sid and twilio_token and twilio_from)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "chatterbuds-api.onrender.com"
 
-    return {
-        "status": "queued" if is_twilio_configured else "stub_ready",
-        "message": (
-            f"Cellular call request received for {to_phone}. "
-            + ("Dispatching via Twilio Voice API." if is_twilio_configured else "Twilio credentials pending in environment variables.")
-        ),
-        "to_phone": to_phone,
-        "from_phone": from_phone,
-        "room_id": room_id,
-        "caller_lang": caller_lang,
-        "twilio_configured": is_twilio_configured,
-    }
+    result = initiate_pstn_call(
+        to_phone=to_phone,
+        from_phone=from_phone,
+        room_id=room_id,
+        caller_lang=caller_lang,
+        callee_lang=callee_lang,
+        host=host,
+    )
+    return result
+
+
+@app.post("/voice/outbound-call")
+async def outbound_cellular_call(payload: dict, request: Request):
+    """
+    Outbound cellular call endpoint (maps to /api/call/pstn).
+    """
+    return await initiate_cellular_pstn_call(payload, request)
 
 
 async def transcribe_audio(audio_bytes: bytes, language: str) -> Optional[str]:
@@ -319,6 +353,14 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                         "target_lang": "N/A",
                     })
 
+                # If Twilio cellular caller is active in this room, stream translated speech to their telephone
+                if room_id in active_twilio_sessions:
+                    cell_session = active_twilio_sessions[room_id]
+                    translated_for_cell = await translate_text(original_text, my_lang, cell_session.callee_lang)
+                    cell_tts_b64 = await synthesize_speech(translated_for_cell, cell_session.callee_lang)
+                    if cell_tts_b64:
+                        await broadcast_to_twilio_cellular(room_id, base64.b64decode(cell_tts_b64))
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected from room '{room_id}'")
     except Exception as e:
@@ -334,6 +376,99 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                 })
             except Exception:
                 pass
+
+
+@app.websocket("/ws/twilio-media/{room_id}")
+async def twilio_media_endpoint(websocket: WebSocket, room_id: str):
+    """
+    Bidirectional Twilio Media Stream WebSocket handler.
+    Converts 8kHz mu-law audio from cellular telephone into live speech translation for ChatterBuds web user,
+    and streams web user's translated speech back into the telephone call.
+    """
+    await websocket.accept()
+    logger.info(f"Twilio Media Stream connected for room #{room_id}")
+
+    session = TwilioSession(room_id=room_id, websocket=websocket)
+    active_twilio_sessions[room_id] = session
+
+    # Notify ChatterBuds room that cellular partner joined
+    await room_manager.broadcast_to_room(room_id, {
+        "event": "partner_status",
+        "connected": True,
+        "partner_lang": session.callee_lang,
+        "is_cellular": True,
+        "message": "Cellular phone partner connected via Twilio Voice.",
+    })
+
+    pcm_accumulator = bytearray()
+    last_audio_time = datetime.now(timezone.utc).timestamp()
+
+    try:
+        while True:
+            raw_msg = await websocket.receive_text()
+            data = json.loads(raw_msg)
+            event_type = data.get("event")
+
+            if event_type == "start":
+                start_meta = data.get("start", {})
+                session.stream_sid = start_meta.get("streamSid", "")
+                custom_params = start_meta.get("customParameters", {})
+                session.caller_lang = custom_params.get("caller_lang", "English")
+                session.callee_lang = custom_params.get("callee_lang", "Hindi")
+                logger.info(f"Twilio stream started. StreamSid: {session.stream_sid}, Caller: {session.caller_lang}, Callee: {session.callee_lang}")
+
+            elif event_type == "media":
+                media_data = data.get("media", {})
+                payload_b64 = media_data.get("payload")
+                if payload_b64:
+                    mulaw_chunk = base64.b64decode(payload_b64)
+                    pcm16_8k = mulaw_to_pcm16(mulaw_chunk)
+                    # Resample 8kHz -> 16kHz for Whisper
+                    pcm16_16k = resample_linear_pcm(pcm16_8k, in_rate=8000, out_rate=16000)
+                    pcm_accumulator.extend(pcm16_16k)
+                    last_audio_time = datetime.now(timezone.utc).timestamp()
+
+            elif event_type == "stop":
+                logger.info(f"Twilio stream stopped for room #{room_id}")
+                break
+
+            now = datetime.now(timezone.utc).timestamp()
+            # Speech chunk trigger: >= 1.5s or after 0.6s silence with at least 0.5s audio
+            if len(pcm_accumulator) >= 48000 or (len(pcm_accumulator) >= 16000 and (now - last_audio_time) > 0.6):
+                audio_to_process = bytes(pcm_accumulator)
+                pcm_accumulator.clear()
+
+                wav_bytes = pcm16_to_wav_bytes(audio_to_process, sample_rate=16000, num_channels=1)
+
+                original_text = await transcribe_audio(wav_bytes, session.callee_lang)
+                if original_text and original_text.strip():
+                    translated_text = await translate_text(original_text, session.callee_lang, session.caller_lang)
+                    tts_audio_b64 = await synthesize_speech(translated_text, session.caller_lang)
+
+                    await room_manager.broadcast_to_room(room_id, {
+                        "event": "message",
+                        "incoming": True,
+                        "self": False,
+                        "original_text": original_text,
+                        "translated_text": translated_text,
+                        "audio_base64": tts_audio_b64,
+                        "source_lang": session.callee_lang,
+                        "target_lang": session.caller_lang,
+                        "is_cellular": True,
+                    })
+
+    except WebSocketDisconnect:
+        logger.info(f"Twilio WebSocket disconnected for room #{room_id}")
+    except Exception as e:
+        logger.error(f"Twilio Media Stream error in room #{room_id}: {e}")
+    finally:
+        session.closed = True
+        active_twilio_sessions.pop(room_id, None)
+        await room_manager.broadcast_to_room(room_id, {
+            "event": "partner_status",
+            "connected": False,
+            "message": "Cellular phone call ended.",
+        })
 
 
 @app.websocket("/ws/presence/{phone_number}")

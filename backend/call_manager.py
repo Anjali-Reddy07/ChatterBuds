@@ -11,6 +11,8 @@ import logging
 from typing import Dict, Optional, Set
 from fastapi import WebSocket
 
+from fcm_service import fcm_service
+
 logger = logging.getLogger("chatterbuds.calls")
 
 
@@ -105,7 +107,7 @@ class CallManager:
         callee_ws = await self.get_presence_socket(norm_to)
 
         if callee_ws:
-            # Recipient is online! Ring the recipient
+            # Tier 1 (Online): Recipient is connected via WebSocket! Ring directly
             try:
                 await callee_ws.send_json({
                     "event": "incoming_call",
@@ -115,11 +117,12 @@ class CallManager:
                     "caller_lang": caller_lang,
                 })
 
-                # Acknowledge ringing to caller
                 await caller_ws.send_json({
                     "event": "call_ringing",
                     "to_phone": norm_to,
                     "room_id": room_id,
+                    "method": "websocket",
+                    "message": "Ringing partner's phone in app...",
                 })
 
                 async with self._lock:
@@ -128,23 +131,51 @@ class CallManager:
                         "callee_phone": norm_to,
                         "caller_lang": caller_lang,
                         "status": "ringing",
+                        "method": "websocket",
                     }
                 return
             except Exception as e:
-                logger.warning(f"Failed to ring {norm_to}: {e}")
+                logger.warning(f"Failed to ring {norm_to} via WebSocket: {e}")
 
-        # Recipient is offline or unreachable
-        sms_text = (
-            f"Hey! I'm calling you on ChatterBuds for real-time two-way voice translation. "
-            f"Join my live voice room here: https://mobile-app-mu-snowy.vercel.app/?room={room_id}"
+        # Tier 1 (Offline / Background): Check for FCM device token to wake background device
+        fcm_sent = await fcm_service.send_incoming_call_push(
+            to_phone=norm_to,
+            from_phone=norm_from,
+            room_id=room_id,
+            caller_lang=caller_lang,
         )
+
+        if fcm_sent:
+            await caller_ws.send_json({
+                "event": "call_ringing",
+                "to_phone": norm_to,
+                "room_id": room_id,
+                "method": "fcm",
+                "message": "Ringing partner's phone via background push...",
+                "pstn_available": True,
+            })
+
+            async with self._lock:
+                self.active_calls[room_id] = {
+                    "caller_phone": norm_from,
+                    "callee_phone": norm_to,
+                    "caller_lang": caller_lang,
+                    "status": "ringing",
+                    "method": "fcm",
+                }
+            return
+
+        # Tier 2 (Not registered / No FCM Token): Cellular PSTN fallback is immediately ready
         await caller_ws.send_json({
-            "event": "user_offline",
+            "event": "pstn_fallback_available",
             "to_phone": norm_to,
             "room_id": room_id,
-            "message": f"{norm_to} is not currently online in ChatterBuds.",
-            "sms_invite": sms_text,
-            "whatsapp_link": f"https://wa.me/{norm_to.replace('+', '')}?text={re.sub(r' ', '%20', sms_text)}",
+            "message": f"{norm_to} is not on the app. Ready to dial via cellular (Twilio PSTN).",
+            "sms_invite": (
+                f"Hey! I'm calling you on ChatterBuds for real-time two-way voice translation. "
+                f"Join my live voice room here: https://mobile-app-mu-snowy.vercel.app/?room={room_id}"
+            ),
+            "whatsapp_link": f"https://wa.me/{norm_to.replace('+', '')}?text=Join%20my%20live%20voice%20translation%20room%20on%20ChatterBuds!%20https://mobile-app-mu-snowy.vercel.app/?room={room_id}",
         })
 
     async def handle_call_accept(

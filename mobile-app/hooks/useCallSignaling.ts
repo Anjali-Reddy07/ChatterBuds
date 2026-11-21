@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { registerFcmDeviceToken, listenToForegroundPush } from "@/lib/firebaseClient";
 
 export type CallState = "idle" | "calling" | "ringing" | "incoming" | "connected";
 
@@ -9,6 +10,7 @@ export interface ActiveCallInfo {
   partnerPhone: string;
   partnerLang?: string;
   isOutgoing: boolean;
+  isCellular?: boolean;
 }
 
 export interface OfflineNoticeInfo {
@@ -34,8 +36,14 @@ export function useCallSignaling({
 }: UseCallSignalingOptions) {
   const [isPresenceConnected, setIsPresenceConnected] = useState(false);
   const [callState, setCallState] = useState<CallState>("idle");
+  const [callStatusText, setCallStatusText] = useState<string>("Connecting...");
   const [activeCall, setActiveCall] = useState<ActiveCallInfo | null>(null);
   const [offlineNotice, setOfflineNotice] = useState<OfflineNoticeInfo | null>(null);
+
+  // Audio controls on active call overlay
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
+  const [isCellularTriggered, setIsCellularTriggered] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -43,12 +51,17 @@ export function useCallSignaling({
   const ringOscillatorRef = useRef<OscillatorNode | null>(null);
   const ringGainRef = useRef<GainNode | null>(null);
   const ringIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const cellularTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Stop any active Web Audio synthesized ringtones
   const stopRingtone = useCallback(() => {
     if (ringIntervalRef.current) {
       clearInterval(ringIntervalRef.current);
       ringIntervalRef.current = null;
+    }
+    if (cellularTimeoutRef.current) {
+      clearTimeout(cellularTimeoutRef.current);
+      cellularTimeoutRef.current = null;
     }
     if (ringOscillatorRef.current) {
       try {
@@ -73,7 +86,9 @@ export function useCallSignaling({
   const playOutgoingRingback = useCallback(() => {
     stopRingtone();
     try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
       audioContextRef.current = ctx;
 
@@ -113,7 +128,9 @@ export function useCallSignaling({
         navigator.vibrate([400, 200, 400, 200, 800]);
       }
 
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
       audioContextRef.current = ctx;
 
@@ -144,6 +161,34 @@ export function useCallSignaling({
       console.warn("Could not play incoming ringtone:", e);
     }
   }, [stopRingtone]);
+
+  // FCM Device Token Registration on user phone change
+  useEffect(() => {
+    const cleanPhone = myPhone.trim().replace(/[^\d+]/g, "");
+    if (cleanPhone && cleanPhone.length >= 5) {
+      registerFcmDeviceToken(cleanPhone, wsUrl).catch((err) =>
+        console.warn("FCM auto-register notice:", err)
+      );
+    }
+  }, [myPhone, wsUrl]);
+
+  // Foreground FCM Push Notification listener
+  useEffect(() => {
+    const unsubscribe = listenToForegroundPush((callData) => {
+      setCallState("incoming");
+      setActiveCall({
+        roomId: callData.roomId,
+        partnerPhone: callData.fromPhone,
+        partnerLang: callData.callerLang,
+        isOutgoing: false,
+      });
+      playIncomingRingtone();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [playIncomingRingtone]);
 
   // Establish Presence WebSocket connection
   useEffect(() => {
@@ -196,43 +241,40 @@ export function useCallSignaling({
               return;
             }
 
-            // 2. Outgoing Call Ringing (Target user is online)
+            // 2. Outgoing Call Ringing (Target user is online or ringing via FCM push)
             if (data.event === "call_ringing") {
               setCallState("ringing");
+              if (data.method === "fcm") {
+                setCallStatusText("Ringing via Push Notification...");
+              } else {
+                setCallStatusText("Ringing Partner's Phone...");
+              }
               return;
             }
 
             // 3. Call Accepted by Callee -> Drop into live translation room
-            if (data.event === "call_accepted") {
+            if (data.event === "call_accepted" || data.event === "call_accepted_confirmed") {
               stopRingtone();
               setCallState("connected");
               onCallAccepted(data.room_id);
               return;
             }
 
-            // 4. Callee Accepted Confirmed
-            if (data.event === "call_accepted_confirmed") {
-              stopRingtone();
-              setCallState("connected");
-              onCallAccepted(data.room_id);
-              return;
-            }
-
-            // 5. Target User Offline
-            if (data.event === "user_offline") {
-              stopRingtone();
-              setCallState("idle");
+            // 4. PSTN Fallback Available (User not in app or FCM timed out)
+            if (data.event === "pstn_fallback_available" || data.event === "user_offline") {
+              // Instead of stopping the call with a scary error, keep ringing and offer direct Cellular PSTN
+              setCallStatusText("Partner offline on app. Ringing via Cellular...");
               setOfflineNotice({
                 toPhone: data.to_phone,
                 roomId: data.room_id,
-                message: data.message || "User is not currently online",
+                message: data.message || "Switching to direct cellular call...",
                 smsInvite: data.sms_invite || "",
                 whatsappLink: data.whatsapp_link || "",
               });
               return;
             }
 
-            // 6. Call Rejected
+            // 5. Call Rejected
             if (data.event === "call_rejected") {
               stopRingtone();
               setCallState("idle");
@@ -240,7 +282,7 @@ export function useCallSignaling({
               return;
             }
 
-            // 7. Call Ended
+            // 6. Call Ended
             if (data.event === "call_ended") {
               stopRingtone();
               setCallState("idle");
@@ -262,7 +304,6 @@ export function useCallSignaling({
             clearInterval(pingIntervalRef.current);
             pingIntervalRef.current = null;
           }
-          // Reconnect after 4s
           if (active) {
             setTimeout(connectPresence, 4000);
           }
@@ -291,7 +332,43 @@ export function useCallSignaling({
     };
   }, [wsUrl, myPhone, onCallAccepted, playIncomingRingtone, stopRingtone]);
 
-  // Initiate an Outgoing Call
+  // Initiate Cellular Fallback via Twilio PSTN
+  const startCellularCall = useCallback(
+    async (targetPhone: string, currentRoomId: string) => {
+      const cleanTo = targetPhone.trim().replace(/[^\d+]/g, "");
+      if (!cleanTo) return;
+
+      setIsCellularTriggered(true);
+      setCallStatusText("Ringing via Cellular (Twilio PSTN)...");
+
+      try {
+        const cleanHttpBase = wsUrl
+          .replace(/^ws:\/\//i, "http://")
+          .replace(/^wss:\/\//i, "https://")
+          .replace(/\/+$/, "")
+          .replace(/\/ws\/?$/i, "");
+
+        const res = await fetch(`${cleanHttpBase}/api/call/pstn`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to_phone: cleanTo,
+            from_phone: myPhone,
+            room_id: currentRoomId,
+            caller_lang: myLang,
+            callee_lang: "Hindi", // Default target or match partner
+          }),
+        });
+        const data = await res.json();
+        console.log("Twilio PSTN call dispatched:", data);
+      } catch (err) {
+        console.warn("Could not dispatch cellular call:", err);
+      }
+    },
+    [wsUrl, myPhone, myLang]
+  );
+
+  // Initiate an Outgoing Call (Tier 1 App/FCM with 20s auto-cellular fallback)
   const startCall = useCallback(
     (toPhone: string, currentRoomCode: string) => {
       const cleanTo = toPhone.trim().replace(/[^\d+]/g, "");
@@ -300,7 +377,10 @@ export function useCallSignaling({
       const callRoomId = currentRoomCode || Math.floor(1000 + Math.random() * 9000).toString();
 
       setCallState("calling");
+      setCallStatusText("Connecting Voice Engine...");
       setOfflineNotice(null);
+      setIsCellularTriggered(false);
+
       setActiveCall({
         roomId: callRoomId,
         partnerPhone: cleanTo,
@@ -319,21 +399,18 @@ export function useCallSignaling({
             caller_lang: myLang,
           })
         );
+
+        // 20-second timer to auto-offer or initiate Tier 2 cellular call if no answer
+        cellularTimeoutRef.current = setTimeout(() => {
+          setCallStatusText("No answer on app. Ready to switch to Cellular Call.");
+        }, 20000);
       } else {
-        // Presence WebSocket not ready, show offline notice
-        stopRingtone();
-        setCallState("idle");
-        const sms = `Hey! I'm calling you on ChatterBuds for real-time voice translation. Join me here: https://mobile-app-mu-snowy.vercel.app/?room=${callRoomId}`;
-        setOfflineNotice({
-          toPhone: cleanTo,
-          roomId: callRoomId,
-          message: "Unable to reach call server. You can invite your partner directly via WhatsApp or SMS.",
-          smsInvite: sms,
-          whatsappLink: `https://wa.me/${cleanTo.replace("+", "")}?text=${encodeURIComponent(sms)}`,
-        });
+        // WebSocket not ready, offer direct cellular
+        setCallStatusText("Ringing via Cellular...");
+        startCellularCall(cleanTo, callRoomId);
       }
     },
-    [myPhone, myLang, playOutgoingRingback, stopRingtone]
+    [myPhone, myLang, playOutgoingRingback, startCellularCall]
   );
 
   // Accept an Incoming Call
@@ -393,6 +470,7 @@ export function useCallSignaling({
     }
     setCallState("idle");
     setActiveCall(null);
+    setIsCellularTriggered(false);
   }, [activeCall, myPhone, stopRingtone]);
 
   const clearOfflineNotice = useCallback(() => {
@@ -402,8 +480,15 @@ export function useCallSignaling({
   return {
     isPresenceConnected,
     callState,
+    callStatusText,
     activeCall,
     offlineNotice,
+    isMuted,
+    toggleMute: () => setIsMuted((prev) => !prev),
+    isSpeakerOn,
+    toggleSpeaker: () => setIsSpeakerOn((prev) => !prev),
+    isCellularTriggered,
+    startCellularCall,
     startCall,
     acceptCall,
     rejectCall,

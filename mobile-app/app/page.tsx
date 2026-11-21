@@ -121,6 +121,7 @@ function ChatterBudsApp() {
 
   // Room & Language state
   const [roomCode, setRoomCode] = useState("1234");
+  const [partnerPhone, setPartnerPhone] = useState<string | undefined>(undefined);
   const [selectedLang, setSelectedLang] = useState("Telugu");
   const [conversationMode, setConversationMode] = useState<ConversationMode>("in-person");
   const [mode, setMode] = useState<AudioMode>("vad");
@@ -149,7 +150,17 @@ function ChatterBudsApp() {
 
       // Check URL query param ?room=XXXX on load
       const queryRoom = searchParams.get("room");
-      if (queryRoom && queryRoom.trim().length > 0) {
+      const incomingRoom = searchParams.get("incomingRoom");
+      const callerNumber = searchParams.get("caller");
+
+      if (incomingRoom && incomingRoom.trim().length > 0) {
+        // Auto-join incoming translation room triggered via background FCM push notification
+        setRoomCode(incomingRoom.trim());
+        if (callerNumber) {
+          setPartnerPhone(callerNumber.trim());
+        }
+        setScreen("live");
+      } else if (queryRoom && queryRoom.trim().length > 0) {
         setRoomCode(queryRoom.trim());
       } else {
         const randomCode = Math.floor(1000 + Math.random() * 9000).toString();
@@ -182,12 +193,19 @@ function ChatterBudsApp() {
     }
   };
 
-  // Call Signaling & Presence hook (incoming/outgoing calls with Web Audio ringtones)
+  // Call Signaling & Presence hook (incoming/outgoing calls with Web Audio ringtones & Twilio PSTN)
   const {
     isPresenceConnected,
     callState,
+    callStatusText,
     activeCall,
     offlineNotice,
+    isMuted,
+    toggleMute,
+    isSpeakerOn,
+    toggleSpeaker,
+    isCellularTriggered,
+    startCellularCall,
     startCall,
     acceptCall,
     rejectCall,
@@ -452,9 +470,16 @@ function ChatterBudsApp() {
         {/* Incoming & Outgoing Call Signaling Overlay */}
         <CallOverlay
           callState={callState}
+          callStatusText={callStatusText}
           activeCall={activeCall}
           offlineNotice={offlineNotice}
           myLang={selectedLang}
+          isMuted={isMuted}
+          onToggleMute={toggleMute}
+          isSpeakerOn={isSpeakerOn}
+          onToggleSpeaker={toggleSpeaker}
+          isCellularTriggered={isCellularTriggered}
+          onStartCellularCall={startCellularCall}
           onAccept={acceptCall}
           onReject={() => rejectCall("declined")}
           onCancel={cancelCall}
