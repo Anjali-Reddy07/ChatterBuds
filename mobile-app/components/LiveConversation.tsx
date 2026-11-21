@@ -218,45 +218,20 @@ export function LiveConversation({
         </div>
       </header>
 
-      {/* Render Cold-Start Wakeup Card */}
-      {isWakingServer && !isConnected && (
-        <div className="mx-4 mt-3 p-3.5 rounded-2xl bg-gradient-to-r from-cyan-950/60 to-slate-900 border border-cyan-500/30 text-xs text-slate-200 flex items-center justify-between shadow-lg animate-in fade-in duration-200">
+      {/* Reassuring Cloud Voice Engine Status Indicator (Auto-connects & wakes Render) */}
+      {!isConnected && (
+        <div className="mx-4 mt-3 p-3.5 rounded-2xl bg-gradient-to-r from-cyan-950/70 via-slate-900/90 to-teal-950/60 border border-cyan-500/30 text-xs text-slate-200 flex items-center justify-between shadow-lg animate-in fade-in duration-200">
           <div className="flex items-center gap-2.5">
             <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
             <div>
-              <span className="font-semibold text-cyan-300 block">Waking up translation server...</span>
+              <span className="font-semibold text-cyan-300 block">Connecting to ChatterBuds Cloud Voice Engine...</span>
               <span className="text-[11px] text-slate-400">
-                Render free tier spins up in ~30s on first load (attempt {wakeAttempt})
+                {isWakingServer || wakeAttempt > 0
+                  ? `Waking up translation server (~30s on first start, attempt ${wakeAttempt || 1})...`
+                  : "Establishing secure real-time audio channel..."}
               </span>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Connection Issue Card (Friendly Helper) */}
-      {connectionError && !isWakingServer && !isConnected && (
-        <div className="mx-4 mt-3 p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/30 text-xs text-amber-200 flex flex-col gap-2 shadow-lg animate-in fade-in duration-200">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <span className="font-semibold text-amber-300 block">Connecting to Voice Engine</span>
-              <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                {isLocalhostIssue
-                  ? "This phone is attempting to connect to 'localhost'. Please set your public Render or Tunnel URL."
-                  : connectionError}
-              </p>
-            </div>
-          </div>
-
-          {onOpenSettings && (
-            <button
-              onClick={onOpenSettings}
-              className="self-end px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[11px] font-bold text-amber-200 flex items-center gap-1.5 transition active:scale-95"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              Set Backend Server URL
-            </button>
-          )}
         </div>
       )}
 

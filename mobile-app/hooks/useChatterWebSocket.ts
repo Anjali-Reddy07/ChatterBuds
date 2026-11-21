@@ -111,16 +111,16 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
 
     setConnectionError(null);
 
-    // Guard: Mobile device opening localhost URL
-    if (isLocalhostMismatch(wsUrl)) {
-      setConnectionError(
-        "Backend URL is currently set to 'localhost'. Please update your Server URL to your public Render or Tunnel URL."
-      );
-      return;
+    // Auto-correct any localhost URLs when running on remote devices
+    let effectiveWsUrl = wsUrl;
+    if (isLocalhostMismatch(effectiveWsUrl) || !effectiveWsUrl || effectiveWsUrl.includes("localhost")) {
+      if (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+        effectiveWsUrl = "wss://chatterbuds-api.onrender.com/ws";
+      }
     }
 
     let active = true;
-    const healthUrl = getHealthUrl(wsUrl);
+    const healthUrl = getHealthUrl(effectiveWsUrl);
 
     // Step 1: Health check / Render cold-start ping before WebSocket connection
     const wakeServerAndConnect = async () => {
@@ -128,7 +128,7 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
       let attempts = 0;
 
       // Only show waking banner if not localhost
-      const isRemote = !wsUrl.includes("localhost") && !wsUrl.includes("127.0.0.1");
+      const isRemote = !effectiveWsUrl.includes("localhost") && !effectiveWsUrl.includes("127.0.0.1");
       if (isRemote) {
         setIsWakingServer(true);
       }
@@ -163,7 +163,7 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
       setIsWakingServer(false);
 
       // Step 2: Establish WebSocket
-      const cleanBaseUrl = wsUrl.replace(/\/+$/, "");
+      const cleanBaseUrl = effectiveWsUrl.replace(/\/+$/, "");
       const targetUrl = `${cleanBaseUrl}/${roomId}/${encodeURIComponent(myLang)}`;
 
       try {
@@ -234,8 +234,7 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
 
         ws.onerror = (e) => {
           if (!active) return;
-          console.error("WebSocket transport error:", e);
-          setConnectionError("Unable to reach ChatterBuds server. Check server URL or wake-up status.");
+          console.warn("WebSocket transport notice (retrying automatically):", e);
         };
 
         ws.onclose = (event) => {
@@ -248,11 +247,23 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
           }
           if (event.code === 4003) {
             setConnectionError("Room is already full (2/2 participants).");
+            return;
           }
+          // Automatic retry every 3s
+          setTimeout(() => {
+            if (active && enabled) {
+              wakeServerAndConnect();
+            }
+          }, 3000);
         };
       } catch (err) {
         if (!active) return;
-        setConnectionError("Invalid WebSocket server URL");
+        console.warn("WebSocket construction notice, auto-retrying in 3s:", err);
+        setTimeout(() => {
+          if (active && enabled) {
+            wakeServerAndConnect();
+          }
+        }, 3000);
       }
     };
 
