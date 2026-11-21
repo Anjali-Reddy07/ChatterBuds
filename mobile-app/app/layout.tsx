@@ -2,8 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ChatterBuds | Voice-Only Translated Chat & Live Calls",
-  description: "WhatsApp-style translated voice notes & live two-way earbud interpreter.",
+  title: "ChatterBuds | Real-Time Live Voice Translator",
+  description: "Real-time, two-way live voice interpreter for phone & Bluetooth earbud pairs.",
+  manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -21,7 +22,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#0B141A",
+  themeColor: "#05070e",
 };
 
 export default function RootLayout({
@@ -30,12 +31,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark bg-[#0B141A] text-slate-100 antialiased h-full">
+    <html lang="en" className="dark bg-[#05070e] text-slate-100 antialiased h-full">
       <head>
         <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
-      <body className="min-h-full flex flex-col bg-[#0B141A] font-sans select-none overflow-x-hidden relative">
+      <body className="min-h-full flex flex-col bg-[#05070e] font-sans select-none overflow-x-hidden relative">
         {/* Ambient background glows */}
         <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
           <div className="absolute -top-[15%] left-1/2 -translate-x-1/2 w-[550px] h-[350px] bg-gradient-to-b from-cyan-500/10 to-transparent rounded-full blur-[100px]" />

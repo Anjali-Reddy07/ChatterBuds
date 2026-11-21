@@ -11,11 +11,6 @@ export interface ChatMessage {
   targetLang: string;
   timestamp: string;
   audioBase64?: string;
-  originalAudioBase64?: string;
-  translatedAudioBase64?: string;
-  durationSec?: number;
-  status?: "sent" | "delivered" | "played";
-  isVoiceNote?: boolean;
 }
 
 interface UseChatterWebSocketOptions {
@@ -31,7 +26,6 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
   const [partnerLang, setPartnerLang] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isPlaying, setIsPlaying] = useState(false); // Drives Echo-Guard
-  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isWakingServer, setIsWakingServer] = useState(false);
   const [wakeAttempt, setWakeAttempt] = useState(0);
@@ -41,22 +35,8 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Stop currently playing audio
-  const pauseAudio = useCallback(() => {
-    if (currentAudioRef.current) {
-      try {
-        currentAudioRef.current.pause();
-      } catch (e) {
-        // ignore
-      }
-      currentAudioRef.current = null;
-    }
-    setIsPlaying(false);
-    setCurrentlyPlayingId(null);
-  }, []);
-
   // Play audio and handle Echo-Guard
-  const playAudioBase64 = useCallback((base64Mp3: string, msgId?: string, speed: number = 1.0) => {
+  const playAudioBase64 = useCallback((base64Mp3: string) => {
     try {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
@@ -65,16 +45,13 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
 
       const audioSrc = `data:audio/mp3;base64,${base64Mp3}`;
       const audio = new Audio(audioSrc);
-      audio.playbackRate = speed;
       currentAudioRef.current = audio;
 
       // Echo-Guard: Mute mic capture immediately
       setIsPlaying(true);
-      if (msgId) setCurrentlyPlayingId(msgId);
 
       const handleAudioEnd = () => {
         setIsPlaying(false);
-        setCurrentlyPlayingId(null);
         currentAudioRef.current = null;
       };
 
@@ -94,42 +71,12 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
     } catch (err) {
       console.error("Audio initialization exception:", err);
       setIsPlaying(false);
-      setCurrentlyPlayingId(null);
     }
   }, []);
 
   const sendAudioChunk = useCallback((audioBase64: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ audio_base64: audioBase64 }));
-    }
-  }, []);
-
-  // Send a recorded voice note
-  const sendVoiceNote = useCallback((audioBase64: string, durationSec: number, senderPhone?: string) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const noteId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      wsRef.current.send(
-        JSON.stringify({
-          event: "voice_note",
-          note_id: noteId,
-          audio_base64: audioBase64,
-          duration_sec: durationSec,
-          sender_phone: senderPhone || "",
-          sender_lang: myLang,
-        })
-      );
-    }
-  }, [myLang]);
-
-  // Mark a voice note as played by recipient (triggers blue double ticks ✓✓)
-  const markNotePlayed = useCallback((noteId: string) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          event: "note_played",
-          note_id: noteId,
-        })
-      );
     }
   }, []);
 
@@ -259,73 +206,7 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
               return;
             }
 
-            // Room History Replay
-            if (data.event === "room_history" && Array.isArray(data.messages)) {
-              const loadedMessages: ChatMessage[] = data.messages.map((m: any) => ({
-                id: m.note_id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                isSelf: Boolean(m.self),
-                originalText: m.original_text || "",
-                translatedText: m.translated_text || "",
-                sourceLang: m.source_lang || myLang,
-                targetLang: m.target_lang || "Translation",
-                timestamp: m.timestamp
-                  ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                  : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                audioBase64: m.incoming ? m.translated_audio_base64 : m.original_audio_base64,
-                originalAudioBase64: m.original_audio_base64,
-                translatedAudioBase64: m.translated_audio_base64,
-                durationSec: m.duration_sec || 0,
-                status: m.status || "delivered",
-                isVoiceNote: true,
-              }));
-              setMessages(loadedMessages);
-              return;
-            }
-
-            // Voice Note Delivered
-            if (data.event === "voice_note_delivered") {
-              const isIncoming = Boolean(data.incoming);
-              const noteId = data.note_id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-              const newNote: ChatMessage = {
-                id: noteId,
-                isSelf: Boolean(data.self) || !isIncoming,
-                originalText: data.original_text || "",
-                translatedText: data.translated_text || "",
-                sourceLang: data.source_lang || myLang,
-                targetLang: data.target_lang || "Translation",
-                timestamp: data.timestamp
-                  ? new Date(data.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                  : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                audioBase64: isIncoming ? data.translated_audio_base64 : data.original_audio_base64,
-                originalAudioBase64: data.original_audio_base64,
-                translatedAudioBase64: data.translated_audio_base64,
-                durationSec: data.duration_sec || 0,
-                status: data.status || "delivered",
-                isVoiceNote: true,
-              };
-
-              setMessages((prev) => {
-                // Avoid duplicates
-                if (prev.some((m) => m.id === noteId)) {
-                  return prev.map((m) => (m.id === noteId ? newNote : m));
-                }
-                return [...prev, newNote];
-              });
-              return;
-            }
-
-            // Voice Note Played Receipt (Turns double ticks to blue ✓✓)
-            if (data.event === "note_played") {
-              const noteId = data.note_id;
-              if (noteId) {
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === noteId ? { ...m, status: "played" } : m))
-                );
-              }
-              return;
-            }
-
-            // Translation Message (Live Call Stream)
+            // Translation Message
             if (data.event === "message") {
               const isIncoming = Boolean(data.incoming);
               const newMsg: ChatMessage = {
@@ -337,13 +218,11 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
                 targetLang: data.target_lang || "Translation",
                 timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                 audioBase64: data.audio_base64 || undefined,
-                status: "played",
-                isVoiceNote: false,
               };
 
               setMessages((prev) => [...prev, newMsg]);
 
-              // If incoming live call chunk contains audio, auto-play into earbuds with Echo-Guard
+              // If incoming message contains synthesized audio, auto-play into earbuds with Echo-Guard
               if (isIncoming && data.audio_base64) {
                 playAudioBase64(data.audio_base64);
               }
@@ -409,15 +288,11 @@ export function useChatterWebSocket({ wsUrl, roomId, myLang, enabled }: UseChatt
     partnerLang,
     messages,
     isPlaying,
-    currentlyPlayingId,
     connectionError,
     isWakingServer,
     wakeAttempt,
     isLocalhostIssue: isLocalhostMismatch(wsUrl),
     sendAudioChunk,
-    sendVoiceNote,
-    markNotePlayed,
     playAudioBase64,
-    pauseAudio,
   };
 }

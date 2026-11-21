@@ -1,12 +1,12 @@
 {
-  "name": "ChatterBuds Voice Translator",
+  "name": "ChatterBuds - Real-Time Voice Translator",
   "short_name": "ChatterBuds",
-  "description": "WhatsApp-style voice-only translator with instant live earbud calls",
+  "description": "Two-way live voice translator for Bluetooth earbuds and smartphones",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0B141A",
-  "theme_color": "#0B141A",
+  "background_color": "#080b11",
+  "theme_color": "#080b11",
   "icons": [
     {
       "src": "/icons/icon-192.svg",
