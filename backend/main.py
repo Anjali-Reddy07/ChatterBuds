@@ -357,26 +357,28 @@ async def transcribe_audio(audio_bytes: bytes, language: Optional[str] = None) -
                 pass
 
 
-async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
-    """Translate conversational speech into target language using Groq Llama 3.3 70B."""
-    if not text:
+async def translate_text(text: str, target_lang: str, source_lang: Optional[str] = None) -> str:
+    """
+    Translate conversational speech directly into recipient's target language using Groq Llama 3.3 70B.
+    Enforces strict output of raw translated speech with zero explanations.
+    """
+    if not text or not text.strip():
         return ""
 
-    if source_lang.lower() == target_lang.lower() and source_lang != "Auto-Detect":
+    if source_lang and source_lang.lower() == target_lang.lower() and source_lang.lower() not in ["auto", "auto-detect"]:
         return text
 
     client = get_groq_client()
     if not client:
-        return f"[Translation to {target_lang}]: {text}"
+        return text
 
     system_prompt = (
         f"You are a real-time conversational voice interpreter. "
-        f"Translate the following spoken message naturally, idiomatically, and directly into {target_lang}. "
-        f"The speaker's language is {source_lang}. "
-        f"Guidelines:\n"
-        f"1. Preserve the conversational tone, emotion, and colloquial nuances suitable for spoken dialogue between friends or colleagues.\n"
-        f"2. Return ONLY the translated sentence with no explanations, notes, phonetic guides, or quotation marks.\n"
-        f"3. If the input is already in {target_lang}, return it as is."
+        f"Translate the following spoken message directly, naturally, and idiomatically into {target_lang}. "
+        f"Strict Guidelines:\n"
+        f"1. Output ONLY the raw spoken translation in {target_lang}.\n"
+        f"2. DO NOT include explanations, notes, phonetic guides, transliterations, or quotation marks.\n"
+        f"3. Preserve the exact conversational tone, emotion, and colloquial nuances suitable for spoken dialogue between friends or family."
     )
 
     try:
@@ -386,13 +388,14 @@ async def translate_text(text: str, source_lang: str, target_lang: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
-            temperature=0.3,
+            temperature=0.2,
             max_tokens=350,
         )
         translated = (response.choices[0].message.content or "").strip()
+        translated = re.sub(r'^["\']+|["\']+$', '', translated).strip()
         return translated if translated else text
     except Exception as e:
-        logger.error(f"Llama translation error: {e}")
+        logger.error(f"Llama translation error into {target_lang}: {e}")
         return text
 
 
@@ -483,10 +486,9 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
             if event == "update_language" or msg_type == "update_language":
                 new_lang = message.get("language")
                 if new_lang:
-                    p = await room_manager.get_participant(room_id, websocket)
-                    if p:
-                        p.language = new_lang
-                        logger.info(f"[{room_id}] Participant updated language to: {new_lang}")
+                    updated_p = await room_manager.update_participant_language(room_id, websocket, new_lang)
+                    if updated_p:
+                        logger.info(f"[{room_id}] Participant updated listening language to: {new_lang}")
                         partner = await room_manager.get_partner(room_id, websocket)
                         if partner:
                             await partner.websocket.send_json({
@@ -508,7 +510,7 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                     continue
 
                 # Step 1: Transcribe with Whisper (Auto-detecting speaker's spoken language)
-                original_text = await transcribe_audio(audio_bytes, None)
+                original_text = await transcribe_audio(audio_bytes, language=None)
                 if not original_text or original_text.strip() == "":
                     continue
 
@@ -518,7 +520,7 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                 if partner:
                     target_lang = partner.language
                     # Step 2: Translate strictly into the recipient's chosen language
-                    translated_text = await translate_text(original_text, "Auto-Detect", target_lang)
+                    translated_text = await translate_text(original_text, target_lang)
                     logger.info(f"[{room_id}] -> Translated into recipient's language ({target_lang}): {translated_text}")
 
                     # Step 3: Edge-TTS synthesis in recipient's language
@@ -548,7 +550,7 @@ async def websocket_room_endpoint(websocket: WebSocket, room_id: str, my_lang: s
                 # If Twilio cellular caller is active in this room, stream translated speech to their telephone
                 if room_id in active_twilio_sessions:
                     cell_session = active_twilio_sessions[room_id]
-                    translated_for_cell = await translate_text(original_text, "Auto-Detect", cell_session.callee_lang)
+                    translated_for_cell = await translate_text(original_text, cell_session.callee_lang)
                     cell_tts_b64 = await synthesize_speech(translated_for_cell, cell_session.callee_lang)
                     if cell_tts_b64:
                         await broadcast_to_twilio_cellular(room_id, base64.b64decode(cell_tts_b64))

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   User,
   ShieldCheck,
@@ -10,8 +10,12 @@ import {
   Check,
   Loader2,
   Sparkles,
+  Bell,
+  BellRing,
+  AlertCircle,
 } from "lucide-react";
 import { syncUserProfile, registerFcmDeviceToken } from "@/lib/firebaseClient";
+import { normalizePhone, formatPhoneDisplay } from "@/lib/phoneUtils";
 
 interface ProfileRegistrationCardProps {
   myPhone: string;
@@ -37,28 +41,75 @@ export function ProfileRegistrationCard({
   const [nameInput, setNameInput] = useState(displayName || "");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [ringingStatus, setRingingStatus] = useState<"enabled" | "prompt" | "denied">("prompt");
+  const [isEnablingRinging, setIsEnablingRinging] = useState(false);
 
-  // Load stored preferences on mount
+  // Sync profile and FCM token helper
+  const syncProfileAndToken = useCallback(
+    async (phone: string, name: string) => {
+      const normPhone = normalizePhone(phone);
+      if (!normPhone || normPhone.length < 5) return;
+
+      try {
+        let token: string | null = null;
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          token = await registerFcmDeviceToken(normPhone, wsUrl || "");
+          setRingingStatus("enabled");
+        }
+
+        await syncUserProfile({
+          phoneNumber: normPhone,
+          displayName: name || "User",
+          preferredLanguage: myLang,
+          fcmToken: token,
+          backendHttpUrl: wsUrl,
+        });
+      } catch (err) {
+        console.warn("Background profile sync notice:", err);
+      }
+    },
+    [myLang, wsUrl]
+  );
+
+  // Check notification permission and load stored preferences on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedName = localStorage.getItem("chatterbuds_display_name");
       const storedPhone = localStorage.getItem("chatterbuds_my_phone");
 
-      if (storedName && storedName.trim()) {
-        onSetDisplayName(storedName.trim());
-        setNameInput(storedName.trim());
+      const resolvedName = storedName && storedName.trim() ? storedName.trim() : null;
+      const resolvedPhone = storedPhone && storedPhone.trim() ? normalizePhone(storedPhone.trim()) : null;
+
+      if (resolvedName) {
+        onSetDisplayName(resolvedName);
+        setNameInput(resolvedName);
       }
-      if (storedPhone && storedPhone.trim()) {
-        onSetMyPhone(storedPhone.trim());
-        setPhoneInput(storedPhone.trim());
+      if (resolvedPhone) {
+        onSetMyPhone(resolvedPhone);
+        setPhoneInput(resolvedPhone);
+      }
+
+      // Check notification permission state
+      if ("Notification" in window) {
+        if (Notification.permission === "granted") {
+          setRingingStatus("enabled");
+          // Auto-sync profile & FCM token to Firestore on mount/refresh
+          if (resolvedPhone) {
+            syncProfileAndToken(resolvedPhone, resolvedName || "User");
+          }
+        } else if (Notification.permission === "denied") {
+          setRingingStatus("denied");
+        } else {
+          setRingingStatus("prompt");
+        }
       }
 
       // If user hasn't configured a display name yet, open edit mode automatically
-      if (!storedName || !storedName.trim()) {
+      if (!resolvedName) {
         setIsEditing(true);
       }
     }
-  }, [onSetDisplayName, onSetMyPhone]);
+  }, [onSetDisplayName, onSetMyPhone, syncProfileAndToken]);
 
   // Keep local inputs in sync with parent props
   useEffect(() => {
@@ -69,9 +120,38 @@ export function ProfileRegistrationCard({
     if (displayName) setNameInput(displayName);
   }, [displayName]);
 
+  // 1-Tap Enable Ringing handler
+  const handleEnableRinging = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    setIsEnablingRinging(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm === "granted") {
+        setRingingStatus("enabled");
+        const cleanPhone = normalizePhone(myPhone || phoneInput);
+        if (cleanPhone) {
+          const token = await registerFcmDeviceToken(cleanPhone, wsUrl || "");
+          await syncUserProfile({
+            phoneNumber: cleanPhone,
+            displayName: displayName || nameInput || "User",
+            preferredLanguage: myLang,
+            fcmToken: token,
+            backendHttpUrl: wsUrl,
+          });
+        }
+      } else if (perm === "denied") {
+        setRingingStatus("denied");
+      }
+    } catch (e) {
+      console.warn("Could not request notification permission:", e);
+    } finally {
+      setIsEnablingRinging(false);
+    }
+  };
+
   const handleSaveProfile = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const cleanPhone = phoneInput.trim();
+    const cleanPhone = normalizePhone(phoneInput);
     const cleanName = nameInput.trim();
 
     if (!cleanPhone || cleanPhone.length < 5) return;
@@ -89,15 +169,21 @@ export function ProfileRegistrationCard({
       onSetMyPhone(cleanPhone);
       onSetDisplayName(finalName);
 
-      // 2. Request FCM Push Notification permission and register device token in Firestore
+      // 2. Request FCM permission & sync to Firestore
       let fcmToken: string | null = null;
       try {
-        fcmToken = await registerFcmDeviceToken(cleanPhone, wsUrl || "");
+        if ("Notification" in window && Notification.permission !== "denied") {
+          const perm = await Notification.requestPermission();
+          if (perm === "granted") {
+            setRingingStatus("enabled");
+            fcmToken = await registerFcmDeviceToken(cleanPhone, wsUrl || "");
+          }
+        }
       } catch (fcmErr) {
         console.warn("FCM token generation notice:", fcmErr);
       }
 
-      // 3. Sync profile to Firestore `users/{cleanPhone}` and backend `/api/user/profile`
+      // 3. Upsert to Firestore `users/{cleanPhone}` and backend `/api/user/profile`
       await syncUserProfile({
         phoneNumber: cleanPhone,
         displayName: finalName,
@@ -111,7 +197,6 @@ export function ProfileRegistrationCard({
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (err) {
       console.error("Save profile error:", err);
-      // Still update locally
       setIsEditing(false);
     } finally {
       setIsSaving(false);
@@ -136,13 +221,26 @@ export function ProfileRegistrationCard({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {isPresenceConnected ? (
-            <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">
+          {ringingStatus === "enabled" ? (
+            <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Online
+              Ringing Enabled
+            </span>
+          ) : ringingStatus === "denied" ? (
+            <span className="text-[10px] text-rose-400 font-semibold px-2.5 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/30">
+              Ringing Blocked
             </span>
           ) : (
-            <span className="text-[10px] text-slate-400 font-medium">Ready</span>
+            <button
+              type="button"
+              onClick={handleEnableRinging}
+              disabled={isEnablingRinging}
+              className="text-[10px] text-amber-300 hover:text-amber-200 font-bold flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 transition active:scale-95 shadow-sm"
+              title="Enable background push ringing even if browser is closed"
+            >
+              <Bell className="w-3 h-3 text-amber-400 animate-bounce" />
+              <span>{isEnablingRinging ? "Enabling..." : "Tap to Enable Ringing"}</span>
+            </button>
           )}
 
           {!isEditing && isConfigured && (
@@ -171,7 +269,9 @@ export function ProfileRegistrationCard({
                   {displayName}
                   <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
                 </span>
-                <span className="text-[11px] font-mono text-slate-400">{myPhone}</span>
+                <span className="text-[11px] font-mono text-slate-400">
+                  {formatPhoneDisplay(myPhone)}
+                </span>
               </div>
             </div>
 
@@ -187,7 +287,7 @@ export function ProfileRegistrationCard({
           <div className="pt-1 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400">
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
               <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-              Caller ID Active &bull; Registered in Firestore
+              Registered on ChatterBuds &bull; Caller ID Active
             </span>
             <span className="text-cyan-400 font-semibold">{myLang}</span>
           </div>

@@ -19,6 +19,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { ActiveCallInfo, OfflineNoticeInfo, CallState } from "@/hooks/useCallSignaling";
+import { formatPhoneDisplay } from "@/lib/phoneUtils";
 
 interface CallOverlayProps {
   callState: CallState;
@@ -82,12 +83,12 @@ export function CallOverlay({
                   {activeCall.partnerName}
                 </span>
                 <span className="text-sm font-mono text-slate-400">
-                  {activeCall.partnerPhone}
+                  {formatPhoneDisplay(activeCall.partnerPhone)}
                 </span>
               </div>
             ) : (
               <h2 className="text-2xl font-black font-mono tracking-wider text-white">
-                {activeCall.partnerPhone}
+                {formatPhoneDisplay(activeCall.partnerPhone)}
               </h2>
             )}
             <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs font-semibold text-slate-300 mx-auto mt-1">
@@ -161,12 +162,12 @@ export function CallOverlay({
                   {activeCall.partnerName}
                 </span>
                 <span className="text-sm font-mono text-slate-400">
-                  {activeCall.partnerPhone}
+                  {formatPhoneDisplay(activeCall.partnerPhone)}
                 </span>
               </div>
             ) : (
               <h2 className="text-2xl font-black font-mono tracking-wider text-white">
-                {activeCall.partnerPhone}
+                {formatPhoneDisplay(activeCall.partnerPhone)}
               </h2>
             )}
             <p className="text-xs text-slate-400">

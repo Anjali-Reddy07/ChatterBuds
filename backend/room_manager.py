@@ -61,6 +61,16 @@ class RoomManager:
                     return p
             return None
 
+    async def update_participant_language(self, room_id: str, websocket: WebSocket, new_language: str) -> Optional[Participant]:
+        """Update participant's preferred listening language live during an active call."""
+        async with self._lock:
+            participants = self.rooms.get(room_id, [])
+            for p in participants:
+                if p.websocket == websocket:
+                    p.language = new_language
+                    return p
+            return None
+
     async def get_partner(self, room_id: str, websocket: WebSocket) -> Optional[Participant]:
         """
         Retrieve the other participant in the same room.

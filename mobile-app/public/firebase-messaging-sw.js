@@ -29,13 +29,15 @@ if (messaging) {
 
     const data = payload.data || {};
     const caller = data.callerNumber || "Someone";
+    const callerName = data.callerName || "";
     const roomId = data.roomId || "1234";
     const callerLang = data.callerLang || "Foreign Language";
-    const clickUrl = `/?incomingRoom=${encodeURIComponent(roomId)}&caller=${encodeURIComponent(caller)}&autoJoin=1`;
+    const clickUrl = `/?incomingRoom=${encodeURIComponent(roomId)}&caller=${encodeURIComponent(caller)}&callerName=${encodeURIComponent(callerName)}&autoJoin=1`;
 
+    const displayCaller = callerName ? `${callerName} (${caller})` : caller;
     const title = payload.notification?.title || "Incoming Translation Call";
     const options = {
-      body: payload.notification?.body || `${caller} (${callerLang}) is calling you for live speech translation.`,
+      body: payload.notification?.body || `${displayCaller} is calling you for live speech translation in ${callerLang}.`,
       icon: "/icons/icon-192.svg",
       badge: "/icons/icon-192.svg",
       tag: "chatterbuds-incoming-call",
@@ -56,6 +58,7 @@ if (messaging) {
         url: clickUrl,
         roomId: roomId,
         caller: caller,
+        callerName: callerName,
       },
     };
 

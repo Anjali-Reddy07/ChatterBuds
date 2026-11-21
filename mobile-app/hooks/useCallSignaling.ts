@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { registerFcmDeviceToken, listenToForegroundPush } from "@/lib/firebaseClient";
+import { normalizePhone } from "@/lib/phoneUtils";
 
 export type CallState = "idle" | "calling" | "ringing" | "incoming" | "connected";
 
@@ -193,7 +194,7 @@ export function useCallSignaling({
 
   // Establish Presence WebSocket connection
   useEffect(() => {
-    const cleanPhone = myPhone.trim().replace(/[^\d+]/g, "");
+    const cleanPhone = normalizePhone(myPhone);
     if (!cleanPhone || cleanPhone.length < 5) {
       setIsPresenceConnected(false);
       return;
@@ -229,14 +230,16 @@ export function useCallSignaling({
 
             if (data.type === "pong") return;
 
-            // 1. Incoming Call Event
-            if (data.event === "incoming_call") {
+            // 1. Incoming Call Event (Handles both WebSocket event and FCM payload types)
+            if (data.event === "incoming_call" || data.type === "INCOMING_CALL") {
+              const fromNumber = normalizePhone(data.from_phone || data.callerNumber || "");
+              const fromName = data.caller_name || data.callerName || undefined;
               setCallState("incoming");
               setActiveCall({
-                roomId: data.room_id,
-                partnerPhone: data.from_phone,
-                partnerName: data.caller_name || undefined,
-                partnerLang: data.caller_lang,
+                roomId: data.room_id || data.roomId || "1234",
+                partnerPhone: fromNumber,
+                partnerName: fromName,
+                partnerLang: data.caller_lang || data.callerLang || "Foreign Language",
                 isOutgoing: false,
               });
               playIncomingRingtone();
@@ -246,8 +249,10 @@ export function useCallSignaling({
             // 2. Outgoing Call Ringing (Target user is online or ringing via FCM push)
             if (data.event === "call_ringing") {
               setCallState("ringing");
-              if (data.method === "fcm") {
-                setCallStatusText("Ringing via Push Notification...");
+              if (data.callee_name) {
+                setCallStatusText(`Ringing ${data.callee_name}...`);
+              } else if (data.method === "fcm") {
+                setCallStatusText("Ringing via Background Push...");
               } else {
                 setCallStatusText("Ringing Partner's Phone...");
               }
@@ -337,7 +342,8 @@ export function useCallSignaling({
   // Initiate Cellular Fallback via Twilio PSTN
   const startCellularCall = useCallback(
     async (targetPhone: string, currentRoomId: string) => {
-      const cleanTo = targetPhone.trim().replace(/[^\d+]/g, "");
+      const cleanTo = normalizePhone(targetPhone);
+      const cleanFrom = normalizePhone(myPhone);
       if (!cleanTo) return;
 
       setIsCellularTriggered(true);
@@ -355,7 +361,7 @@ export function useCallSignaling({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             to_phone: cleanTo,
-            from_phone: myPhone,
+            from_phone: cleanFrom,
             room_id: currentRoomId,
             caller_lang: myLang,
             callee_lang: "Hindi", // Default target or match partner
@@ -373,13 +379,14 @@ export function useCallSignaling({
   // Initiate an Outgoing Call (Tier 1 App/FCM with 20s auto-cellular fallback)
   const startCall = useCallback(
     (toPhone: string, currentRoomCode: string, resolvedName?: string) => {
-      const cleanTo = toPhone.trim().replace(/[^\d+]/g, "");
+      const cleanTo = normalizePhone(toPhone);
+      const cleanFrom = normalizePhone(myPhone);
       if (!cleanTo || cleanTo.length < 5) return;
 
       const callRoomId = currentRoomCode || Math.floor(1000 + Math.random() * 9000).toString();
 
       setCallState("calling");
-      setCallStatusText("Connecting Voice Engine...");
+      setCallStatusText(resolvedName ? `Calling ${resolvedName}...` : "Calling Partner...");
       setOfflineNotice(null);
       setIsCellularTriggered(false);
 
@@ -396,7 +403,7 @@ export function useCallSignaling({
         wsRef.current.send(
           JSON.stringify({
             event: "call_invite",
-            from_phone: myPhone,
+            from_phone: cleanFrom,
             to_phone: cleanTo,
             room_id: callRoomId,
             caller_lang: myLang,

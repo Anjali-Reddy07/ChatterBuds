@@ -8,6 +8,7 @@ import { CallOverlay } from "@/components/CallOverlay";
 import { useChatterWebSocket } from "@/hooks/useChatterWebSocket";
 import { useAudioRecorder, AudioMode, ConversationMode } from "@/hooks/useAudioRecorder";
 import { useCallSignaling } from "@/hooks/useCallSignaling";
+import { normalizePhone } from "@/lib/phoneUtils";
 import {
   Headphones,
   ExternalLink,
@@ -197,9 +198,10 @@ function ChatterBudsApp() {
   }, [searchParams]);
 
   const handleSetMyPhone = (phone: string) => {
-    setMyPhone(phone);
+    const norm = normalizePhone(phone);
+    setMyPhone(norm || phone);
     if (typeof window !== "undefined") {
-      localStorage.setItem("chatterbuds_my_phone", phone);
+      localStorage.setItem("chatterbuds_my_phone", norm || phone);
     }
   };
 
@@ -243,6 +245,7 @@ function ChatterBudsApp() {
     wakeAttempt,
     isLocalhostIssue,
     sendAudioChunk,
+    changeLanguage,
     playAudioBase64,
   } = useChatterWebSocket({
     wsUrl,
@@ -263,6 +266,7 @@ function ChatterBudsApp() {
     mode,
     conversationMode,
     isPlaying,
+    isMuted,
     onAudioChunk: sendAudioChunk,
   });
 
@@ -358,7 +362,10 @@ function ChatterBudsApp() {
           <LiveConversation
             roomCode={roomCode}
             myLang={selectedLang}
-            onSelectMyLang={setSelectedLang}
+            onSelectMyLang={(newLang) => {
+              setSelectedLang(newLang);
+              changeLanguage(newLang);
+            }}
             partnerConnected={partnerConnected}
             partnerLang={partnerLang}
             partnerPhone={partnerPhone || activeCall?.partnerPhone}

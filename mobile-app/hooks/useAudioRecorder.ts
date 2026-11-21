@@ -9,6 +9,7 @@ interface UseAudioRecorderOptions {
   mode: AudioMode;
   conversationMode?: ConversationMode; // In-Person vs Remote
   isPlaying: boolean; // Echo-guard: mute capture when partner translation is playing
+  isMuted?: boolean; // User microphone mute toggle
   onAudioChunk: (base64Audio: string) => void;
 }
 
@@ -16,6 +17,7 @@ export function useAudioRecorder({
   mode,
   conversationMode = "in-person",
   isPlaying,
+  isMuted = false,
   onAudioChunk,
 }: UseAudioRecorderOptions) {
   const [isRecording, setIsRecording] = useState(false);
@@ -33,11 +35,16 @@ export function useAudioRecorder({
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechDetectedRef = useRef(false);
   const isPlayingRef = useRef(isPlaying);
+  const isMutedRef = useRef(isMuted);
   const conversationModeRef = useRef(conversationMode);
 
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
   useEffect(() => {
     conversationModeRef.current = conversationMode;
@@ -90,7 +97,7 @@ export function useAudioRecorder({
   };
 
   const dispatchCurrentRecording = useCallback(async () => {
-    if (audioChunksRef.current.length === 0) return;
+    if (audioChunksRef.current.length === 0 || isMutedRef.current) return;
     const blob = new Blob(audioChunksRef.current, { type: "audio/webm;codecs=opus" });
     audioChunksRef.current = [];
 

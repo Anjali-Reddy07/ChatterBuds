@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { PhoneCall, Delete, Globe2, Sparkles, ShieldCheck, Users, Loader2 } from "lucide-react";
+import { normalizePhone } from "@/lib/phoneUtils";
 
 export const COUNTRY_CODES = [
   { code: "+91", label: "India", flag: "🇮🇳" },
@@ -53,11 +54,11 @@ export function DialPad({ onCall, partnerLangName, isCalling }: DialPadProps) {
     }
   }, []);
 
-  // Automatic Truecaller / Caller-ID Lookup when 10+ digits are entered
+  // Automatic Caller ID Lookup when 10+ digits are entered
   useEffect(() => {
     const rawDigits = phoneNumber.trim().replace(/\D/g, "");
     if (rawDigits.length >= 10) {
-      const full = `${selectedCountry}${rawDigits}`;
+      const full = normalizePhone(`${selectedCountry}${rawDigits}`);
       let active = true;
       setIsLookingUp(true);
 
@@ -153,7 +154,7 @@ export function DialPad({ onCall, partnerLangName, isCalling }: DialPadProps) {
   const handleCallClick = () => {
     const rawDigits = phoneNumber.trim().replace(/\D/g, "");
     if (rawDigits.length >= 4) {
-      const full = `${selectedCountry}${rawDigits}`;
+      const full = normalizePhone(`${selectedCountry}${rawDigits}`);
       onCall(full, resolvedCallerName || undefined);
     }
   };

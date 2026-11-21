@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getMessaging, getToken, onMessage, Messaging } from "firebase/messaging";
 import { getFirestore, doc, setDoc, Firestore } from "firebase/firestore";
+import { normalizePhone } from "./phoneUtils";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyChatterBudsDemoKeyForGoogleOAuth2",
@@ -52,7 +53,7 @@ export async function registerFcmDeviceToken(
     return null;
   }
 
-  const cleanPhone = phoneNumber.trim().replace(/[^\d+]/g, "");
+  const cleanPhone = normalizePhone(phoneNumber);
   if (!cleanPhone || cleanPhone.length < 5) return null;
 
   try {
@@ -148,7 +149,7 @@ export async function syncUserProfile({
   fcmToken?: string | null;
   backendHttpUrl?: string;
 }): Promise<boolean> {
-  const cleanPhone = phoneNumber.trim().replace(/[^\d+]/g, "");
+  const cleanPhone = normalizePhone(phoneNumber);
   if (!cleanPhone || cleanPhone.length < 5) return false;
 
   const profileData = {

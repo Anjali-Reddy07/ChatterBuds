@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { AVAILABLE_LANGUAGES } from "./RoomSetup";
 import { AudioVisualizer } from "./AudioVisualizer";
+import { formatPhoneDisplay } from "@/lib/phoneUtils";
 
 interface LiveConversationProps {
   roomCode: string;
@@ -126,8 +127,8 @@ export function LiveConversation({
   };
 
   const statusInfo = getStatusDisplay();
-  const displayName = partnerName || partnerPhone || `Room #${roomCode}`;
-  const displayPhone = partnerPhone || `Room Code #${roomCode}`;
+  const displayName = partnerName || (partnerPhone ? formatPhoneDisplay(partnerPhone) : `Room #${roomCode}`);
+  const displayPhone = partnerPhone ? formatPhoneDisplay(partnerPhone) : `Room Code #${roomCode}`;
 
   return (
     <div className="flex flex-col h-[100dvh] max-h-[100dvh] justify-between pb-6 pt-4 px-4 bg-gradient-to-b from-[#060913] via-[#090d1c] to-[#04060c] text-slate-100 select-none relative overflow-hidden">

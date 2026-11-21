@@ -7,11 +7,29 @@ and rings the recipient device with action buttons.
 import os
 import json
 import logging
+import re
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
 logger = logging.getLogger("chatterbuds.fcm")
+
+
+def normalize_phone(raw_phone: str) -> str:
+    """Strict phone normalizer to +91XXXXXXXXXX or valid E.164."""
+    if not raw_phone:
+        return ""
+    p = str(raw_phone).strip()
+    digits = re.sub(r"\D", "", p)
+    if not digits:
+        return ""
+    if len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"+91{digits}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+{digits}"
+    return f"+{digits}"
 
 
 def encode_safe(val: str) -> str:
@@ -72,10 +90,10 @@ class FCMService:
         init_firebase_admin()
 
     async def save_user_profile(self, phone_number: str, data: dict) -> bool:
-        """Save Truecaller name, language preference, and metadata to Firestore users collection."""
-        if not phone_number:
+        """Save user profile (displayName, language, fcmToken) to Firestore users collection."""
+        clean_phone = normalize_phone(phone_number)
+        if not clean_phone:
             return False
-        clean_phone = phone_number.strip()
         existing = self.in_memory_profiles.get(clean_phone, {})
         existing.update(data)
         existing["phoneNumber"] = clean_phone
@@ -94,8 +112,10 @@ class FCMService:
         return True
 
     async def get_user_profile(self, phone_number: str) -> Optional[dict]:
-        """Lookup registered user profile including Truecaller name from in-memory cache or Firestore."""
-        clean_phone = phone_number.strip()
+        """Lookup registered user profile including displayName from in-memory cache or Firestore."""
+        clean_phone = normalize_phone(phone_number)
+        if not clean_phone:
+            return None
         if clean_phone in self.in_memory_profiles:
             return self.in_memory_profiles[clean_phone]
 
@@ -116,10 +136,9 @@ class FCMService:
         """
         Store FCM token in in-memory cache and sync with Firestore users collection.
         """
-        if not phone_number or not fcm_token:
+        clean_phone = normalize_phone(phone_number)
+        if not clean_phone or not fcm_token:
             return False
-
-        clean_phone = phone_number.strip()
         self.in_memory_tokens[clean_phone] = fcm_token
         logger.info(f"Registered FCM device token for {clean_phone} (in-memory)")
 
@@ -146,7 +165,9 @@ class FCMService:
         """
         Lookup FCM device token from in-memory cache or Firestore.
         """
-        clean_phone = phone_number.strip()
+        clean_phone = normalize_phone(phone_number)
+        if not clean_phone:
+            return None
         if clean_phone in self.in_memory_tokens:
             return self.in_memory_tokens[clean_phone]
 

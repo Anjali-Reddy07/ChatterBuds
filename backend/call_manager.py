@@ -16,20 +16,42 @@ from fcm_service import fcm_service
 logger = logging.getLogger("chatterbuds.calls")
 
 
-def normalize_phone_number(raw_phone: str) -> str:
+def normalize_phone(raw_phone: str) -> str:
     """
-    Normalizes phone numbers to standard E.164-style strings.
-    Strips spaces, parentheses, hyphens, dots.
-    Ensures leading '+' if country code is present.
-    Example: ' +91 98765-43210 ' -> '+919876543210'
+    Strict phone number normalizer matching frontend normalizePhone().
+    - Strips whitespace, dashes, hyphens, dots, parentheses, and leading zeros.
+    - Prepends +91 to standard 10-digit Indian numbers.
+    - Example:
+        '9876543210' -> '+919876543210'
+        '09876543210' -> '+919876543210'
+        '+91 98765-43210' -> '+919876543210'
+        '14155552671' -> '+14155552671'
     """
     if not raw_phone:
         return ""
-    cleaned = re.sub(r"[^\d+]", "", raw_phone.strip())
-    if cleaned and not cleaned.startswith("+"):
-        # If no plus, assume standard international or prepend plus
-        cleaned = f"+{cleaned}"
-    return cleaned
+    p = str(raw_phone).strip()
+    digits = re.sub(r"\D", "", p)
+    if not digits:
+        return ""
+
+    # Strip leading zero if 11 digits starting with 0
+    if len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+
+    # 10 digits -> Indian mobile number (+91)
+    if len(digits) == 10:
+        return f"+91{digits}"
+
+    # 12 digits starting with 91 -> +91XXXXXXXXXX
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+{digits}"
+
+    # Preserve international numbers with leading +
+    return f"+{digits}"
+
+
+# Alias for backward compatibility across modules
+normalize_phone_number = normalize_phone
 
 
 class CallManager:
@@ -121,24 +143,38 @@ class CallManager:
 
         callee_ws = await self.get_presence_socket(norm_to)
 
+        # Dual-Channel Ringing: If recipient is online, ring via WebSocket AND fire background FCM push
         if callee_ws:
-            # Tier 1 (Online): Recipient is connected via WebSocket! Ring directly
             try:
+                # 1. Direct WebSocket Ringing
                 await callee_ws.send_json({
                     "event": "incoming_call",
+                    "type": "INCOMING_CALL",
                     "from_phone": norm_from,
+                    "caller_number": norm_from,
                     "caller_name": caller_name,
                     "to_phone": norm_to,
                     "room_id": room_id,
                     "caller_lang": caller_lang,
                 })
 
+                # 2. Simultaneous high-priority FCM push to wake screen/device if locked
+                asyncio.create_task(
+                    fcm_service.send_incoming_call_push(
+                        to_phone=norm_to,
+                        from_phone=norm_from,
+                        room_id=room_id,
+                        caller_lang=caller_lang,
+                        caller_name=caller_name,
+                    )
+                )
+
                 await caller_ws.send_json({
                     "event": "call_ringing",
                     "to_phone": norm_to,
                     "callee_name": callee_name,
                     "room_id": room_id,
-                    "method": "websocket",
+                    "method": "dual_channel",
                     "message": "Ringing partner's phone in app...",
                 })
 
@@ -150,13 +186,13 @@ class CallManager:
                         "callee_name": callee_name,
                         "caller_lang": caller_lang,
                         "status": "ringing",
-                        "method": "websocket",
+                        "method": "dual_channel",
                     }
                 return
             except Exception as e:
                 logger.warning(f"Failed to ring {norm_to} via WebSocket: {e}")
 
-        # Tier 1 (Offline / Background): Check for FCM device token to wake background device
+        # Tier 1 (Offline / Background): Ring via high-priority FCM push notification
         fcm_sent = await fcm_service.send_incoming_call_push(
             to_phone=norm_to,
             from_phone=norm_from,
@@ -188,12 +224,13 @@ class CallManager:
                 }
             return
 
-        # Tier 2 (Not registered / No FCM Token): Cellular PSTN fallback is immediately ready
+        # Tier 2 (Not registered in Firestore / No FCM token): Cellular PSTN fallback immediately ready
         await caller_ws.send_json({
             "event": "pstn_fallback_available",
             "to_phone": norm_to,
+            "callee_name": callee_name,
             "room_id": room_id,
-            "message": f"{norm_to} is not on the app. Ready to dial via cellular (Twilio PSTN).",
+            "message": f"{callee_name or norm_to} is not on the app. Ready to dial via cellular (Twilio PSTN).",
             "sms_invite": (
                 f"Hey! I'm calling you on ChatterBuds for real-time two-way voice translation. "
                 f"Join my live voice room here: https://mobile-app-mu-snowy.vercel.app/?room={room_id}"
