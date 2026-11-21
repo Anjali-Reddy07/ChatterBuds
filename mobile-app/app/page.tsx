@@ -9,6 +9,8 @@ import { CallOverlay } from "@/components/CallOverlay";
 import { useChatterWebSocket } from "@/hooks/useChatterWebSocket";
 import { useAudioRecorder, AudioMode, ConversationMode } from "@/hooks/useAudioRecorder";
 import { useCallSignaling } from "@/hooks/useCallSignaling";
+import { SyncedContact, DEFAULT_SAMPLE_CONTACTS } from "@/lib/firebase";
+import { User } from "firebase/auth";
 import {
   Headphones,
   ExternalLink,
@@ -123,9 +125,14 @@ function ChatterBudsApp() {
   // Room & Language state
   const [roomCode, setRoomCode] = useState("1234");
   const [partnerPhone, setPartnerPhone] = useState<string | undefined>(undefined);
+  const [partnerName, setPartnerName] = useState<string | undefined>(undefined);
   const [selectedLang, setSelectedLang] = useState("Telugu");
   const [conversationMode, setConversationMode] = useState<ConversationMode>("in-person");
   const [mode, setMode] = useState<AudioMode>("vad");
+
+  // Google User & Synced Contacts
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [contacts, setContacts] = useState<SyncedContact[]>(DEFAULT_SAMPLE_CONTACTS);
 
   // Mobile Number Identity for Call Signaling
   const [myPhone, setMyPhone] = useState("+91");
@@ -160,10 +167,29 @@ function ChatterBudsApp() {
 
       // Check stored recent chats
       try {
+        // Check stored recent chats
         const savedChats = localStorage.getItem("chatterbuds_recent_chats");
         if (savedChats) {
           const parsed = JSON.parse(savedChats);
           if (Array.isArray(parsed)) setRecentChats(parsed);
+        }
+
+        // Check stored contacts
+        const savedContacts = localStorage.getItem("chatterbuds_contacts");
+        if (savedContacts) {
+          const parsed = JSON.parse(savedContacts);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setContacts(parsed);
+          }
+        }
+
+        // Check stored Google user profile
+        const savedUser = localStorage.getItem("chatterbuds_google_user");
+        if (savedUser) {
+          const parsed = JSON.parse(savedUser);
+          if (parsed && parsed.email) {
+            setCurrentUser(parsed as User);
+          }
         }
       } catch (e) {
         // ignore
@@ -196,6 +222,17 @@ function ChatterBudsApp() {
     setMyPhone(phone);
     if (typeof window !== "undefined") {
       localStorage.setItem("chatterbuds_my_phone", phone);
+    }
+  };
+
+  const handleContactsSynced = (newContacts: SyncedContact[]) => {
+    setContacts(newContacts);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("chatterbuds_contacts", JSON.stringify(newContacts));
+      } catch (e) {
+        // ignore
+      }
     }
   };
 
@@ -263,6 +300,7 @@ function ChatterBudsApp() {
             lastMessageSnippet: snippet,
             lastMessageTime: time,
             partnerPhone: partnerPhone || updated[existingIdx].partnerPhone,
+            partnerName: partnerName || updated[existingIdx].partnerName,
             partnerLang: partnerLang || updated[existingIdx].partnerLang,
           };
         } else {
@@ -270,6 +308,7 @@ function ChatterBudsApp() {
             {
               roomId: roomCode,
               partnerPhone,
+              partnerName,
               partnerLang: partnerLang || undefined,
               lastMessageSnippet: snippet,
               lastMessageTime: time,
@@ -368,9 +407,14 @@ function ChatterBudsApp() {
             onSelectLang={setSelectedLang}
             isPresenceConnected={isPresenceConnected}
             recentChats={recentChats}
-            onOpenChat={(roomId, phone) => {
+            contacts={contacts}
+            onContactsSynced={handleContactsSynced}
+            currentUser={currentUser}
+            onUserChange={setCurrentUser}
+            onOpenChat={(roomId, phone, name) => {
               setRoomCode(roomId);
               if (phone) setPartnerPhone(phone);
+              if (name) setPartnerName(name);
               setScreen("chat");
             }}
             onStartCall={(targetPhone, roomId) => {
@@ -389,6 +433,7 @@ function ChatterBudsApp() {
           <WhatsAppChatScreen
             roomCode={roomCode}
             partnerPhone={partnerPhone}
+            partnerName={partnerName}
             partnerConnected={partnerConnected}
             partnerLang={partnerLang}
             myLang={selectedLang}
