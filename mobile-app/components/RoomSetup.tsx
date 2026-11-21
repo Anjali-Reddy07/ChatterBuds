@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { ConversationMode } from "@/hooks/useAudioRecorder";
 import { DialPad, COUNTRY_CODES } from "./DialPad";
-import { TruecallerAuthButton } from "./TruecallerAuthButton";
+import { ProfileRegistrationCard } from "./ProfileRegistrationCard";
 
 export const AVAILABLE_LANGUAGES = [
   { code: "Auto-Detect", name: "Auto-Detect", native: "✨ Whisper AI", flag: "🌐" },
@@ -59,8 +59,8 @@ interface RoomSetupProps {
   onSelectConversationMode: (mode: ConversationMode) => void;
   myPhone: string;
   onSetMyPhone: (phone: string) => void;
-  truecallerName?: string | null;
-  onSetTruecallerName?: (name: string) => void;
+  displayName?: string | null;
+  onSetDisplayName?: (name: string) => void;
   isPresenceConnected?: boolean;
   onCallPhone?: (targetPhone: string, resolvedName?: string) => void;
   isCalling?: boolean;
@@ -80,8 +80,8 @@ export function RoomSetup({
   onSelectConversationMode,
   myPhone,
   onSetMyPhone,
-  truecallerName,
-  onSetTruecallerName,
+  displayName,
+  onSetDisplayName,
   isPresenceConnected,
   onCallPhone,
   isCalling,
@@ -266,50 +266,16 @@ export function RoomSetup({
         </div>
       </div>
 
-      {/* IDENTITY: My Callable Mobile Number */}
-      <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Smartphone className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-              My Mobile Number (Callable ID)
-            </h2>
-          </div>
-          {isPresenceConnected ? (
-            <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Callable Online
-            </span>
-          ) : (
-            <span className="text-[10px] text-slate-400 font-medium">
-              Enter number to be called
-            </span>
-          )}
-        </div>
-
-        <input
-          type="tel"
-          value={myPhone}
-          onChange={(e) => onSetMyPhone(e.target.value)}
-          placeholder="+91 98765 43210"
-          className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs font-mono font-semibold text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-400 transition"
-        />
-
-        {/* 1-Tap Truecaller Identity Verification */}
-        {onSetTruecallerName && (
-          <TruecallerAuthButton
-            myPhone={myPhone}
-            onSetMyPhone={onSetMyPhone}
-            truecallerName={truecallerName || null}
-            onSetTruecallerName={onSetTruecallerName}
-            myLang={selectedLang}
-          />
-        )}
-
-        <p className="text-[10px] text-slate-400 leading-tight">
-          Enables your partner to call and translate into your earbuds directly by dialing your phone number.
-        </p>
-      </div>
+      {/* IDENTITY: My Callable Mobile Number & Web-Native Caller ID Profile */}
+      <ProfileRegistrationCard
+        myPhone={myPhone}
+        onSetMyPhone={onSetMyPhone}
+        displayName={displayName || null}
+        onSetDisplayName={onSetDisplayName || (() => {})}
+        myLang={selectedLang}
+        isPresenceConnected={isPresenceConnected}
+        wsUrl={wsUrl}
+      />
 
       {/* STEP 1: Choose Your Language */}
       <div className="p-3.5 rounded-2xl glass-panel border border-white/10 shadow-lg">

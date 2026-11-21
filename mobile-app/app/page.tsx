@@ -122,13 +122,14 @@ function ChatterBudsApp() {
   // Room & Language state
   const [roomCode, setRoomCode] = useState("1234");
   const [partnerPhone, setPartnerPhone] = useState<string | undefined>(undefined);
+  const [partnerName, setPartnerName] = useState<string | undefined>(undefined);
   const [selectedLang, setSelectedLang] = useState("Telugu");
   const [conversationMode, setConversationMode] = useState<ConversationMode>("in-person");
   const [mode, setMode] = useState<AudioMode>("vad");
 
-  // Mobile Number Identity for Call Signaling
+  // Mobile Number Identity & Registered Display Name
   const [myPhone, setMyPhone] = useState("+91");
-  const [truecallerName, setTruecallerName] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
 
   // In-App Browser (Instagram / WhatsApp WebView) Guard
   const [isInAppBrowser, setIsInAppBrowser] = useState(false);
@@ -153,12 +154,20 @@ function ChatterBudsApp() {
       const queryRoom = searchParams.get("room");
       const incomingRoom = searchParams.get("incomingRoom");
       const callerNumber = searchParams.get("caller");
+      const callerNameParam = searchParams.get("callerName");
 
       if (incomingRoom && incomingRoom.trim().length > 0) {
         // Auto-join incoming translation room triggered via background FCM push notification
         setRoomCode(incomingRoom.trim());
         if (callerNumber) {
           setPartnerPhone(callerNumber.trim());
+        }
+        if (callerNameParam) {
+          try {
+            setPartnerName(decodeURIComponent(callerNameParam).trim());
+          } catch {
+            setPartnerName(callerNameParam.trim());
+          }
         }
         setScreen("live");
       } else if (queryRoom && queryRoom.trim().length > 0) {
@@ -227,8 +236,8 @@ function ChatterBudsApp() {
     isConnected,
     partnerConnected,
     partnerLang,
-    isPlaying,
     callStatus: wsCallStatus,
+    isPlaying,
     connectionError,
     isWakingServer,
     wakeAttempt,
@@ -326,11 +335,12 @@ function ChatterBudsApp() {
               onSelectConversationMode={handleSelectConversationMode}
               myPhone={myPhone}
               onSetMyPhone={handleSetMyPhone}
-              truecallerName={truecallerName}
-              onSetTruecallerName={setTruecallerName}
+              displayName={displayName}
+              onSetDisplayName={setDisplayName}
               isPresenceConnected={isPresenceConnected}
               onCallPhone={(targetPhone, resolvedName) => {
                 setPartnerPhone(targetPhone);
+                if (resolvedName) setPartnerName(resolvedName);
                 startCall(targetPhone, roomCode, resolvedName);
               }}
               isCalling={callState === "calling" || callState === "ringing"}
@@ -352,7 +362,7 @@ function ChatterBudsApp() {
             partnerConnected={partnerConnected}
             partnerLang={partnerLang}
             partnerPhone={partnerPhone || activeCall?.partnerPhone}
-            partnerName={activeCall?.partnerName || partnerPhone}
+            partnerName={activeCall?.partnerName || partnerName || partnerPhone}
             onLeaveRoom={handleLeaveRoom}
             isRecording={isRecording}
             isSpeaking={isSpeaking}
@@ -362,10 +372,10 @@ function ChatterBudsApp() {
               isSpeaking
                 ? "speaking"
                 : isPlaying
-                ? "translating"
-                : partnerConnected
-                ? "connected"
-                : "connecting"
+                  ? "translating"
+                  : partnerConnected
+                    ? "connected"
+                    : "connecting"
             }
             isConnected={isConnected}
             isWakingServer={isWakingServer}

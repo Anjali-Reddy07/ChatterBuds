@@ -129,54 +129,77 @@ async def outbound_cellular_call(payload: dict, request: Request):
     return await initiate_cellular_pstn_call(payload, request)
 
 
+@app.post("/api/user/profile")
+async def save_user_profile_endpoint(payload: dict):
+    """
+    Registers or updates the user's display name, phone number, preferred language,
+    and FCM token in Firestore users collection.
+    Accepts: { phoneNumber, displayName, preferredLanguage, fcmToken }
+    """
+    phone_number = payload.get("phoneNumber") or payload.get("phone") or ""
+    display_name = payload.get("displayName") or payload.get("name") or ""
+    preferred_lang = payload.get("preferredLanguage") or payload.get("lang") or "English"
+    fcm_token = payload.get("fcmToken") or payload.get("token") or ""
+
+    norm_phone = normalize_phone_number(phone_number)
+    if not norm_phone or len(norm_phone) < 7:
+        raise HTTPException(status_code=400, detail="Valid phone number required")
+
+    profile_data = {
+        "phoneNumber": norm_phone,
+        "displayName": display_name.strip() if display_name else "User",
+        "preferredLanguage": preferred_lang.strip(),
+        "verified": True,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    if fcm_token:
+        profile_data["fcmToken"] = fcm_token.strip()
+
+    await fcm_service.save_user_profile(norm_phone, profile_data)
+    if fcm_token:
+        await fcm_service.register_device_token(norm_phone, fcm_token.strip())
+
+    return {
+        "status": "ok",
+        "phoneNumber": norm_phone,
+        "displayName": profile_data["displayName"],
+        "preferredLanguage": preferred_lang,
+        "fcmToken": fcm_token,
+    }
+
+
 @app.post("/api/auth/truecaller")
 async def truecaller_auth_callback(payload: dict):
     """
-    Truecaller Web SDK verification and profile sync.
-    Accepts: { accessToken, endpoint, phoneNumber, truecallerName, preferredLanguage }
+    Profile callback endpoint (supports display name and legacy Truecaller payload).
     """
-    access_token = payload.get("accessToken", "").strip()
-    endpoint = payload.get("endpoint", "").strip()
-    phone_number = payload.get("phoneNumber", "").strip()
-    truecaller_name = payload.get("truecallerName", "").strip()
-    preferred_lang = payload.get("preferredLanguage", "Telugu").strip()
+    if "displayName" in payload:
+        return await save_user_profile_endpoint(payload)
 
-    if endpoint and access_token:
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.get(endpoint, headers={"Authorization": f"Bearer {access_token}"})
-                if resp.status_code == 200:
-                    data = resp.json()
-                    name_obj = data.get("name", {})
-                    first = name_obj.get("first", "")
-                    last = name_obj.get("last", "")
-                    full = f"{first} {last}".strip()
-                    if full:
-                        truecaller_name = full
-                    phones = data.get("phoneNumbers", [])
-                    if phones:
-                        phone_number = phones[0]
-        except Exception as e:
-            logger.warning(f"Truecaller profile fetch notice: {e}")
+    phone_number = payload.get("phoneNumber", "").strip()
+    name = payload.get("truecallerName") or payload.get("displayName") or "User"
+    preferred_lang = payload.get("preferredLanguage", "English").strip()
+    fcm_token = payload.get("fcmToken", "").strip()
 
     norm_phone = normalize_phone_number(phone_number)
     if not norm_phone:
         raise HTTPException(status_code=400, detail="Valid phone number required")
 
-    await fcm_service.save_user_profile(
-        norm_phone,
-        {
-            "truecallerName": truecaller_name or "Verified User",
-            "preferredLanguage": preferred_lang,
-            "verified": True,
-        },
-    )
+    profile_data = {
+        "phoneNumber": norm_phone,
+        "displayName": name,
+        "preferredLanguage": preferred_lang,
+        "verified": True,
+    }
+    if fcm_token:
+        profile_data["fcmToken"] = fcm_token
+
+    await fcm_service.save_user_profile(norm_phone, profile_data)
 
     return {
         "status": "ok",
         "phoneNumber": norm_phone,
-        "truecallerName": truecaller_name or "Verified User",
+        "displayName": name,
         "preferredLanguage": preferred_lang,
     }
 
@@ -184,36 +207,114 @@ async def truecaller_auth_callback(payload: dict):
 @app.get("/api/caller-id/{phone_number}")
 async def lookup_caller_id(phone_number: str):
     """
-    Resolves Truecaller registered name and caller identity for a dialed number.
-    Checks Firestore users collection, with fallback to external Caller ID API if configured.
+    Resolves registered name and caller identity for a dialed number:
+    1. Checks Firestore users collection for registered displayName.
+    2. If not registered, checks Twilio Lookup v2 Caller Name (if Twilio credentials are configured).
+    3. If still not found, calls external Caller ID API (configured via CALLER_ID_API_KEY).
+    4. Automatically caches external lookup results to Firestore users collection.
     """
     norm_phone = normalize_phone_number(phone_number)
     if not norm_phone or len(norm_phone) < 7:
         return {"phoneNumber": norm_phone, "name": None, "found": False}
 
+    # 1. Check Firestore users collection
     profile = await fcm_service.get_user_profile(norm_phone)
-    if profile and profile.get("truecallerName"):
-        return {
-            "phoneNumber": norm_phone,
-            "name": profile.get("truecallerName"),
-            "source": "truecaller",
-            "found": True,
-        }
+    if profile:
+        resolved_name = profile.get("displayName") or profile.get("truecallerName")
+        if resolved_name and resolved_name.strip():
+            return {
+                "phoneNumber": norm_phone,
+                "name": resolved_name.strip(),
+                "source": "firestore",
+                "found": True,
+            }
 
-    # Optional external Caller ID API fallback
+    # 2. Twilio Lookup v2 with Caller Name intelligence (if Twilio credentials present)
+    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    twilio_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    if twilio_sid and twilio_token:
+        try:
+            import httpx
+            # Twilio Lookup v2 endpoint with caller_name package
+            lookup_url = f"https://lookups.twilio.com/v2/PhoneNumbers/{norm_phone}?Fields=caller_name"
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                res = await client.get(lookup_url, auth=(twilio_sid, twilio_token))
+                if res.status_code == 200:
+                    data = res.json()
+                    cname_obj = data.get("caller_name") or {}
+                    cname = cname_obj.get("caller_name")
+                    if cname and cname.strip():
+                        name = cname.strip()
+                        # Cache into Firestore for future lookups
+                        await fcm_service.save_user_profile(
+                            norm_phone,
+                            {
+                                "phoneNumber": norm_phone,
+                                "displayName": name,
+                                "source": "twilio_lookup",
+                                "cached": True,
+                            },
+                        )
+                        return {
+                            "phoneNumber": norm_phone,
+                            "name": name,
+                            "source": "twilio_lookup",
+                            "found": True,
+                        }
+        except Exception as e:
+            logger.warning(f"Twilio caller ID lookup notice: {e}")
+
+    # 3. External Reverse Phone Lookup API (CALLER_ID_API_KEY)
     caller_id_api_key = os.getenv("CALLER_ID_API_KEY", "").strip()
     if caller_id_api_key:
         try:
             import httpx
-            url = f"https://api.calleridservice.com/v1/lookup?phone={norm_phone}&key={caller_id_api_key}"
+            custom_url = os.getenv("CALLER_ID_API_URL", "").strip()
             async with httpx.AsyncClient(timeout=4.0) as client:
-                r = await client.get(url)
+                if custom_url:
+                    url = custom_url.replace("{phone}", norm_phone).replace("{key}", caller_id_api_key)
+                    headers = {"X-RapidAPI-Key": caller_id_api_key}
+                    r = await client.get(url, headers=headers)
+                elif caller_id_api_key.startswith("rapid_") or len(caller_id_api_key) > 40:
+                    # RapidAPI Truecaller / Phone Lookup endpoint
+                    url = f"https://truecaller4.p.rapidapi.com/api/v1/search?phone={norm_phone}"
+                    headers = {
+                        "X-RapidAPI-Key": caller_id_api_key,
+                        "X-RapidAPI-Host": "truecaller4.p.rapidapi.com",
+                    }
+                    r = await client.get(url, headers=headers)
+                else:
+                    # Numverify / APILayer reverse phone lookup
+                    url = f"https://api.numverify.com/validate?access_key={caller_id_api_key}&number={norm_phone}"
+                    r = await client.get(url)
+
                 if r.status_code == 200:
-                    cname = r.json().get("name")
-                    if cname:
-                        return {"phoneNumber": norm_phone, "name": cname, "source": "cnam_api", "found": True}
-        except Exception:
-            pass
+                    data = r.json()
+                    cname = (
+                        data.get("name")
+                        or data.get("caller_name")
+                        or (data.get("data", {}).get("name") if isinstance(data.get("data"), dict) else None)
+                    )
+                    if cname and str(cname).strip():
+                        clean_cname = str(cname).strip()
+                        # Cache into Firestore
+                        await fcm_service.save_user_profile(
+                            norm_phone,
+                            {
+                                "phoneNumber": norm_phone,
+                                "displayName": clean_cname,
+                                "source": "caller_id_api",
+                                "cached": True,
+                            },
+                        )
+                        return {
+                            "phoneNumber": norm_phone,
+                            "name": clean_cname,
+                            "source": "caller_id_api",
+                            "found": True,
+                        }
+        except Exception as e:
+            logger.warning(f"External caller ID lookup notice: {e}")
 
     return {"phoneNumber": norm_phone, "name": None, "found": False}
 

@@ -132,6 +132,68 @@ export async function registerFcmDeviceToken(
 }
 
 /**
+ * Syncs user profile (phoneNumber, displayName, preferredLanguage, fcmToken)
+ * directly with Firestore users collection and backend /api/user/profile.
+ */
+export async function syncUserProfile({
+  phoneNumber,
+  displayName,
+  preferredLanguage,
+  fcmToken,
+  backendHttpUrl,
+}: {
+  phoneNumber: string;
+  displayName: string;
+  preferredLanguage: string;
+  fcmToken?: string | null;
+  backendHttpUrl?: string;
+}): Promise<boolean> {
+  const cleanPhone = phoneNumber.trim().replace(/[^\d+]/g, "");
+  if (!cleanPhone || cleanPhone.length < 5) return false;
+
+  const profileData = {
+    phoneNumber: cleanPhone,
+    displayName: displayName.trim() || "User",
+    preferredLanguage: preferredLanguage || "English",
+    fcmToken: fcmToken || null,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // 1. Direct Firestore write
+  const { firestore: db } = getFirebaseClient();
+  if (db) {
+    try {
+      const userDoc = doc(db, "users", cleanPhone);
+      await setDoc(userDoc, profileData, { merge: true });
+    } catch (e) {
+      console.warn("Firestore profile sync warning:", e);
+    }
+  }
+
+  // 2. Sync with backend /api/user/profile
+  try {
+    const baseUrl = backendHttpUrl
+      ? backendHttpUrl
+          .replace(/^ws:\/\//i, "http://")
+          .replace(/^wss:\/\//i, "https://")
+          .replace(/\/+$/, "")
+          .replace(/\/ws\/?$/i, "")
+      : "";
+
+    const endpoint = baseUrl ? `${baseUrl}/api/user/profile` : "/api/user/profile";
+    await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profileData),
+    });
+    return true;
+  } catch (err) {
+    console.warn("Backend user profile sync warning:", err);
+    return false;
+  }
+}
+
+/**
  * Listen for foreground FCM push notifications while the app is active
  */
 export function listenToForegroundPush(onIncomingCall: (callData: any) => void): () => void {

@@ -45,6 +45,13 @@ export function DialPad({ onCall, partnerLangName, isCalling }: DialPadProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [resolvedCallerName, setResolvedCallerName] = useState<string | null>(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [hasContactPicker, setHasContactPicker] = useState(false);
+
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && "contacts" in navigator && "select" in (navigator as any).contacts) {
+      setHasContactPicker(true);
+    }
+  }, []);
 
   // Automatic Truecaller / Caller-ID Lookup when 10+ digits are entered
   useEffect(() => {
@@ -157,21 +164,26 @@ export function DialPad({ onCall, partnerLangName, isCalling }: DialPadProps) {
     <div className="flex flex-col items-center gap-3 w-full animate-in fade-in duration-200">
       {/* Resolved Caller ID Badge */}
       {(resolvedCallerName || isLookingUp) && (
-        <div className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-xs text-cyan-300 animate-in fade-in slide-in-from-top-1">
-          <div className="flex items-center gap-1.5 truncate">
+        <div className="w-full flex items-center justify-between px-3.5 py-2 rounded-xl bg-cyan-950/60 border border-cyan-500/40 text-xs text-cyan-300 animate-in fade-in slide-in-from-top-1 shadow-lg shadow-cyan-950/30">
+          <div className="flex items-center gap-2 truncate">
             {isLookingUp ? (
-              <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" />
+              <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
             ) : (
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
             )}
-            <span className="truncate">
-              {isLookingUp
-                ? "Looking up Caller ID..."
-                : `Truecaller Verified: ${resolvedCallerName}`}
-            </span>
+            <div className="flex flex-col truncate">
+              <span className="font-bold text-white text-xs truncate">
+                {isLookingUp ? "Resolving Caller ID..." : resolvedCallerName}
+              </span>
+              {!isLookingUp && (
+                <span className="text-[10px] text-cyan-300/80 font-medium">
+                  Registered Caller ID
+                </span>
+              )}
+            </div>
           </div>
-          <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
-            Caller ID
+          <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 shrink-0">
+            Verified
           </span>
         </div>
       )}
@@ -206,12 +218,12 @@ export function DialPad({ onCall, partnerLangName, isCalling }: DialPadProps) {
         />
 
         {/* Device Contact Picker Button */}
-        {typeof navigator !== "undefined" && "contacts" in navigator && (
+        {hasContactPicker && (
           <button
             type="button"
             onClick={handlePickContact}
-            className="p-2 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-cyan-400 transition"
-            title="Pick from device contacts"
+            className="p-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 transition flex items-center gap-1"
+            title="Pick from contacts"
           >
             <Users className="w-4 h-4" />
           </button>

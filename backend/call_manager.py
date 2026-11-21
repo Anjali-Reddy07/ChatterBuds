@@ -102,12 +102,20 @@ class CallManager:
         norm_from = normalize_phone_number(from_phone)
         norm_to = normalize_phone_number(to_phone)
 
-        # Lookup Truecaller Name for caller and callee
+        # Lookup Registered / Caller ID Name for caller and callee
         caller_profile = await fcm_service.get_user_profile(norm_from)
-        caller_name = caller_profile.get("truecallerName") if caller_profile else None
+        caller_name = (
+            caller_profile.get("displayName") or caller_profile.get("truecallerName")
+            if caller_profile
+            else None
+        )
 
         callee_profile = await fcm_service.get_user_profile(norm_to)
-        callee_name = callee_profile.get("truecallerName") if callee_profile else None
+        callee_name = (
+            callee_profile.get("displayName") or callee_profile.get("truecallerName")
+            if callee_profile
+            else None
+        )
 
         logger.info(f"Call invite: {norm_from} ({caller_name}) -> {norm_to} ({callee_name}) [Room #{room_id}] (Lang: {caller_lang})")
 
